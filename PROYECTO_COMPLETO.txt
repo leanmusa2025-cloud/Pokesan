@@ -1,0 +1,3850 @@
+# PROYECTO COMPLETO: Pokesán — Avellaneda 96
+# Codigo fuente entero, concatenado. Cada bloque empieza con ===== ARCHIVO: ruta =====
+# El juego final se arma con: sh build.sh
+
+===== ARCHIVO: ESPECIFICACION.md =====
+# Pokesán — Avellaneda 96 · Especificación técnica
+
+Documento pensado para que otra persona (o otra IA) entienda, modifique o
+extienda el proyecto sin tener que leer los 3.000 renglones de código.
+
+---
+
+## 1. Qué es
+
+Un RPG de captura de criaturas al estilo Game Boy Color, ambientado en las
+calles de Avellaneda (Provincia de Buenos Aires) en 1996. Es un homenaje
+paródico: **no usa ni una sola línea, sprite, nombre ni sonido de ningún
+juego existente**. Todo es original y está escrito a mano para este proyecto.
+
+Duración actual: entre 45 y 75 minutos según cuánto se cacen bichos.
+
+## 2. Restricciones de diseño (son el corazón del proyecto)
+
+Estas restricciones son innegociables. Cualquier cambio tiene que respetarlas:
+
+| # | Restricción | Por qué |
+|---|---|---|
+| 1 | **Un solo archivo `.html` autocontenido** | Se manda por WhatsApp como documento y se abre solo |
+| 2 | **Cero dependencias externas** — sin CDN, sin `fetch`, sin fuentes web, sin imágenes | Tiene que andar sin internet y desde `file://` |
+| 3 | **Peso chico** (hoy ~120 KB) | Que entre en cualquier plan de datos |
+| 4 | **Sin emulador ni ROM** | Motor propio, no es un ROM hack |
+| 5 | **Anda con teclado y con dedos** | Compu y celular, mismo archivo |
+| 6 | **60 fps en celulares viejos** | Nada de canvas gigantes ni cálculos por pixel en el bucle |
+| 7 | **Todo el arte es texto** | Se edita con cualquier editor, hace diffs legibles en git |
+| 8 | **Español rioplatense**, registro conurbano de los 90 | Es el chiste del juego |
+
+## 3. Estructura del repo
+
+```
+Pokesan.html          <- el juego armado (esto es lo que se manda)
+build.sh              <- concatena src/ y produce Pokesan.html
+src/
+  00_head.html        51 líneas   HTML, CSS, botones táctiles
+  10_font.js         170 líneas   tipografía 5x7 pixel a pixel
+  15_core.js         248 líneas   canvas, paleta, sprites, input, audio, guardado
+  20_tiles.js        166 líneas   30 tiles de 16x16
+  25_sprites.js      349 líneas   personas del barrio + arte de los 15 bichos
+  30_data.js         141 líneas   tipos, ataques, bichos, objetos, fórmulas
+  40_maps.js         440 líneas   10 mapas, vecinos, diálogos, 15 duelos
+  50_mundo.js        290 líneas   caminar, hablar, warps, encuentros, diálogos
+  60_batalla.js      505 líneas   combate por turnos
+  70_menus.js        317 líneas   menús, kiosco, escenas especiales, créditos
+  80_main.js         160 líneas   pantalla de título, bucle principal
+  99_tail.html         2 líneas   cierre del HTML
+test/
+  driver.js           captura una pantalla de cada parte del juego
+  flujo.js            juega una partida entera: starter → gimnasio → jefe final
+  stress.js           captura de bichos, derrota y 120.000 frames de teclas al azar
+  mapas.js            saca una foto de cada mapa
+docs/                 capturas para el README
+```
+
+### Build
+
+```sh
+sh build.sh      # cat src/00_head.html + <script>src/[1-8]*.js</script> + src/99_tail.html
+```
+
+No hay bundler, ni npm install, ni transpilación. Es un `cat` ordenado por
+nombre de archivo. **El orden de los prefijos numéricos importa**: define el
+orden de evaluación. Todo vive en el scope global; no hay módulos.
+
+---
+
+## 4. Arquitectura de ejecución
+
+### 4.1 Pantalla
+
+Canvas de **160x144** (resolución exacta de la Game Boy), escalado por CSS con
+`image-rendering: pixelated`. `resize()` calcula la escala: entera cuando entra
+(1x, 1.5x, 2x, 2.5x…), fraccionaria si la pantalla es chica. Nunca se dibuja
+en coordenadas mayores a 160x144.
+
+### 4.2 Bucle
+
+```js
+requestAnimationFrame(bucle)
+  → acumula delta
+  → mientras acumulado >= 16.666 y n < 4:  paso(dibujar)
+```
+
+Paso fijo de 60 Hz con hasta 4 catch-ups por frame. **Sólo el último paso
+dibuja** (`paso(false)` actualiza sin dibujar). Si la pestaña estuvo en
+segundo plano, el delta se recorta a 250 ms.
+
+### 4.3 Máquina de estados
+
+Variable global `modo`:
+
+| modo | qué es | update | draw |
+|---|---|---|---|
+| `titulo` | pantalla de inicio y elección de nombre | `updTitulo` | `dibujarTitulo` |
+| `mundo` | caminar por el mapa | `updMundo` | `dibujarMundo` |
+| `dialogo` | cuadro de texto (encima del mundo) | `updDlg` | mundo + `dibujarDlg` |
+| `menu` | menú START, bolso, fichas, tienda | `updMenu` | `dibujarMenu` |
+| `batalla` | combate | `updBatalla` | `dibujarBatalla` |
+| `fin` | créditos | `updFin` | `dibujarFin` |
+
+Los fundidos a negro se manejan aparte con `fade = {v, dir, cb}`: `fundir(cb)`
+oscurece, ejecuta `cb` en negro, y aclara. Mientras `fade.dir !== 0` no se
+procesa input.
+
+### 4.4 Input
+
+Dos objetos globales:
+
+- `K` — tecla mantenida (`K.up`, `K.a`, …). Se usa para caminar.
+- `KP` — tecla **recién apretada** este frame. Se usa para menús y diálogos.
+  `clearPressed()` la limpia al final de cada `paso()`.
+
+Nombres lógicos: `up dn lf rt a b st`. El mapeo de teclas físicas está en
+`MAPK`. Los botones táctiles son `<b data-k="ArrowUp">` en el HTML y se
+resuelven por *hit-testing* de `event.touches` contra los rectángulos, así que
+soportan multitouch real (caminar y atacar a la vez) y deslizar el dedo de un
+botón a otro.
+
+---
+
+## 5. Formato del arte (esto es lo más particular del proyecto)
+
+### 5.1 Paleta
+
+`PAL` es un diccionario de **un caracter → color hex**, 20 colores:
+
+```
+0 #0f0f14 negro     6 #5c3a22 marrón osc   c #1f3f7a azul osc   i #f0d858 amarillo
+1 #24242f gris osc  7 #8f5f33 marrón       d #3f7fc8 azul       j #e8b48c piel
+2 #43435a gris      8 #c39355 marrón claro e #8fc8f0 celeste    k #c98a66 piel osc
+3 #6d6d88 gris med  9 #2f6b34 verde osc    f #a02020 rojo osc   l #7a2a6a violeta
+4 #a8a8bd gris cl   a #4f9d43 verde        g #d94b3a rojo       m #c85a9a rosa
+5 #e6e6f0 blanco    b #8fc45a verde claro  h #f0a03c naranja    n/o/p/q oliva·crema
+                                                                 r #3a3a48  s #f5f5ff
+```
+
+### 5.2 Sprites
+
+Un sprite es un **array de strings**; cada caracter es un pixel:
+
+- `.` o espacio = transparente
+- cualquier clave de `PAL` = ese color
+- claves en MAYÚSCULA = "slots" que se resuelven con el segundo argumento
+
+```js
+makeSprite(art, extra)   // devuelve un <canvas> offscreen
+mkArt(rows, colors)      // igual pero rellena filas cortas con '.' (padArt)
+```
+
+`padArt` permite escribir sólo hasta el último pixel útil de cada fila: no hace
+falta contar los puntos del final. **Las filas nunca deben pasar el ancho
+declarado** (24 para los bichos, 16 para tiles y personas).
+
+### 5.3 Tiles
+
+`TILE_ART` — 30 entradas, cada una **exactamente 16 filas de 16 caracteres**.
+La clave es el caracter que se usa en los mapas.
+
+| id | tile | id | tile | id | tile |
+|---|---|---|---|---|---|
+| `.` | vereda | `L` | poste de luz | `X` | pared interior |
+| `,` | asfalto | `B` | banco de plaza | `b` | cama |
+| `-` | línea blanca horizontal | `S` | cartel | `t` | televisor |
+| `!` | línea blanca vertical | `g` | tierra | `M` | mostrador |
+| `"` | pasto corto | `n` | escombros | `H` | heladera de kiosco |
+| `*` | yuyal (**hay encuentros**) | `A` | tierra de canchita | `E` | felpudo de salida |
+| `~` | agua del Riachuelo | `V` | tribuna | `P` | tablones del puente |
+| `#` | pared de ladrillo | `T` | árbol sobre vereda | `Q` | baranda del puente |
+| `W` | pared con ventana | `Y` | árbol sobre pasto | `R` | paredón con graffiti |
+| `D` | puerta (warp) | `C` | contenedor | `\|` | alambrado |
+
+`SOLID = '#WTYR|CLBSnXbtMHV~Q'` — string con los tiles que frenan al jugador.
+Ojo: **cada tile tiene el fondo pintado adentro** (el árbol de vereda tiene
+fondo gris, el de plaza fondo verde). Por eso hay dos árboles. Si se agrega un
+objeto para un fondo nuevo, hay que hacer una variante.
+
+### 5.4 Personas
+
+En vez de dibujar 10 personajes, hay **una plantilla** de 16x16 en tres vistas
+(`P_DOWN`, `P_UP`, `P_SIDE`) con slots de color:
+
+`O` contorno · `H` pelo/gorra · `K` piel · `S` remera · `P` pantalón · `Z` zapatillas · `V` overlay
+
+`buildPerson(look)` compone las 6 imágenes (3 direcciones × 2 cuadros de
+caminata) recoloreando la plantilla. La vista izquierda es la derecha
+espejada (`blitFlip`). El segundo cuadro de caminata reemplaza las filas 13-15
+por `LEGS2` (piernas abiertas), que da el rebote típico.
+
+Overlays opcionales: `gorra: 1` agrega visera, `pelolargo: 1` agrega pelo a los
+costados. `LOOKS` tiene 18 combinaciones de colores; agregar un vecino nuevo
+son 1 renglón.
+
+### 5.5 Bichos
+
+`MON_ART` — 15 entradas, ancho máximo 24, alto variable. En batalla se dibujan
+**a escala 2x** y apoyados en el piso:
+
+- rival: `y = 58 - alto*2`, `x = 104`
+- propio: `y = 94 - alto*2`, `x = 8`
+
+Así conviven bichos chatos (Chorimón, 15 filas) con altos (Yuyaco, 23 filas)
+sin flotar ni hundirse.
+
+### 5.6 Tipografía
+
+`FONT_SRC` es un string donde **cada renglón es un glifo**:
+
+```
+[caracter][fila_inicial][fila0/fila1/fila2/...]
+```
+
+Ejemplo: `A0.###./#...#/#...#/#####/#...#/#...#` = la letra A, empezando en la
+fila 0, seis filas de 5 pixeles. Las minúsculas arrancan en la fila 1, las que
+tienen cola (`g j p q y`) llegan a la 6.
+
+Hay 88 glifos: A-Z, a-z, 0-9, `Ñ ñ á é í ó ú ü`, `¿ ¡` y puntuación. El ancho
+de cada letra es variable (se calcula del último pixel usado) más 1 de
+separación. Alto de línea: 9 px. Caben ~26 caracteres por renglón.
+
+Para dibujar rápido se genera un **atlas por color** (`glyphAtlas`) la primera
+vez que se usa ese color; después cada letra es un solo `drawImage`.
+
+```js
+drawText(ctx, texto, x, y, color)
+textWidth(texto)          // ancho en pixeles
+wrapText(texto, maxw)     // corta en renglones, respeta \n
+drawTextBig(s,x,y,col,sc) // sólo para el título
+```
+
+---
+
+## 6. Formato de los mapas
+
+`MAPAS` es un diccionario. Cada mapa:
+
+```js
+nombre_interno: {
+  nom: 'Plaza Alsina',      // cartelito que aparece al entrar
+  mus: 'barrio',            // tema musical
+  int: 1,                   // opcional: es interior
+  t: ['RRRR....', ...],     // filas de tiles, TODAS del mismo ancho
+  warps: [...],
+  npcs: [...],
+  obj:  [...],              // cosas que se pueden mirar
+  enc:  {...}               // tabla de encuentros (opcional)
+}
+```
+
+### Warps
+
+Dos clases:
+
+```js
+{ x:2, y:3, a:'casa', ax:5, ay:6, ad:'u' }              // pisar ese tile
+{ borde:'n', xs:[9,12], a:'plaza', ax:9, ay:16, ad:'u'} // salir por el borde
+```
+
+`borde` es `n` (norte), `s`, `o` (oeste) o `e`. `xs`/`ys` es el rango de tiles
+por donde se puede salir. `ax, ay, ad` = dónde y mirando a dónde aparecés.
+
+### Vecinos
+
+```js
+{ x:13, y:5, d:'l', c:'rosa', nom:'Doña Rosa', id:'rosa' }
+```
+
+`d` = dirección a la que mira (`u d l r`), `c` = clave de `LOOKS`, `id` = clave
+en `GENTE`. Los NPCs **bloquean el paso**.
+
+### Cosas mirables
+
+```js
+obj: [{ x:19, y:7, txt: 'CALLE MITRE al 300.\nAvellaneda...' }]
+```
+
+### Encuentros
+
+```js
+enc: {
+  tiles: '*',            // en qué tiles se dispara
+  rate: 0.11,            // probabilidad por paso
+  lista: [['palomin', 3, 6, 30], ...]   // [bicho, nivel min, nivel max, peso]
+}
+```
+
+Los pesos no necesitan sumar 100; se normalizan solos.
+
+### Diálogos y gente
+
+`GENTE[id]` puede ser:
+
+```js
+{ nom:'Vecina', dial: () => ['renglón 1', 'renglón 2\ncon salto'] }  // charla
+{ nom:'Kevin',  esp: 'entrenador' }                                   // duelo
+{ nom:'Chirola', esp:'chirola' }                                      // escena a mano
+{ nom:'Ramón',   esp:'kiosco' }                                       // curar + tienda
+```
+
+`dial` es **una función**, así que puede leer y escribir el estado (`G.flags`),
+dar objetos, o cambiar según el avance. Ejemplo real (la abuela regala un
+Materazzo una sola vez):
+
+```js
+abuela: { nom:'Abuela', dial: () => {
+  if (G.flags.mate) return ['Cuidámelo al Materazzo, ¿eh?'];
+  if (!G.flags.starter) return ['Nene, cuando tengas un bicho vení.'];
+  G.flags.mate = 1; darBicho(crearBicho('materazzo', 8));
+  return ['Tomá, llevate el mate viejo.', '*Te dio un Materazzo!*'];
+}}
+```
+
+### Duelos
+
+`DUELOS[id]`:
+
+```js
+rosa: {
+  nom:'DOÑA ROSA', look:'rosa', plata:500,
+  gym:'Medalla Escoba',                       // si existe, es gimnasio
+  eq: [['trapin',10], ['palomin',10], ['cumbion',12]],
+  pre:  ['lo que dice antes'],
+  win:  ['lo que dice cuando le ganás'],
+  post: ['lo que dice después, ya derrotada']
+}
+```
+
+Ganado queda `G.flags['d_' + id] = 1`. El jefe final (`colectivero`) dispara
+`finalDelJuego()` desde `terminarBatalla`.
+
+---
+
+## 7. Datos y fórmulas
+
+### 7.1 Tipos
+
+7 tipos: `GRASA YUYO PODRIDO FIERRO CHAMUYO CORRIENTE VOLADOR`
+
+```js
+SUPER = {
+  GRASA:     ['YUYO', 'CHAMUYO'],
+  YUYO:      ['PODRIDO', 'FIERRO'],
+  PODRIDO:   ['GRASA', 'CORRIENTE'],
+  FIERRO:    ['VOLADOR', 'YUYO'],
+  CHAMUYO:   ['FIERRO', 'PODRIDO'],
+  CORRIENTE: ['VOLADOR', 'GRASA'],
+  VOLADOR:   ['YUYO', 'CHAMUYO']
+}
+```
+
+`efect(tipoAtaque, tiposDefensor)` devuelve el multiplicador: **2x** si es
+súper eficaz, **0,5x** si el defensor es súper eficaz contra el atacante, y se
+multiplica por cada tipo del defensor (o sea, un doble tipo puede dar 4x o
+0,25x). No hay inmunidades.
+
+### 7.2 Ataques
+
+31 ataques en `ATAQUES`, con:
+
+```js
+grasada: { n:'Grasada', t:'GRASA', p:45, pp:30, e:'efecto' }
+```
+
+Efectos disponibles: `tufo` (veneno, 35%), `aturde` (parálisis, 35%),
+`bajaAtk`, `bajaDef`, `cura` (recupera 50% de la vida máxima), `chupa`
+(absorbe la mitad del daño), `primero` (prioridad de turno). `p: 0` = ataque
+de estado puro. `forcejeo` (Manotazo, GRASA 32) es el ataque de emergencia
+cuando no quedan PP; no está en ninguna lista de aprendizaje.
+
+### 7.3 Bichos
+
+```js
+yuyin: {
+  n: 'Yuyín',
+  t: ['YUYO'],              // uno o dos tipos
+  b: [45, 45, 45, 40],      // base de vida, ataque, defensa, velocidad
+  x: 62,                    // experiencia que da al caer
+  cap: 190,                 // facilidad de captura (más alto = más fácil, 30..200)
+  evo: ['yuyaco', 14],      // evoluciona a X al nivel Y (opcional)
+  ap: [[1,'yuyazo'], [7,'semillita'], ...],   // aprende ataque a tal nivel
+  d: 'Descripción de la ficha (máx ~3 renglones de 25 caracteres)'
+}
+```
+
+Los 15: `yuyin→yuyaco`, `chorimon→chorizon`, `riachin→riachonzo` (los tres
+iniciales, evolucionan al 14), `palomin`, `perrucho`, `cucaracho`, `cumbion`,
+`trapin`, `gomon`, `materazzo`, `ferneton`, `bondimon` (el más fuerte, base
+72/70/70/42, `cap: 30`).
+
+### 7.4 Fórmulas
+
+```js
+vida    = floor(base * nivel / 50) + nivel + 10
+resto   = floor(base * nivel / 50) + 5             // ataque, defensa, velocidad
+exp para subir a nivel L = L³                       // curva "medium fast"
+
+daño = floor(floor(floor(2*nivel/5 + 2) * potencia * ATQ / DEF) / 50) + 2
+       × efectividad × 1,5 si el ataque es del tipo del bicho
+       × 2 si es crítico (1 de cada 16)
+       × aleatorio entre 0,85 y 1,00
+       (mínimo 1)
+
+modificadores de estadística: etapa s → (2+s)/2 si s≥0, si no 2/(2-s), rango -6..0
+
+experiencia ganada = floor(exp_base * nivel_rival / 7) × 1,5 si era un duelo
+
+captura: p = (1 - vida/vida_max × 0,7) × (cap/255) × factor_chapita
+         × 1,4 si tiene estado alterado,  recortado entre 0,03 y 0,95
+         factor: chapita 1 · chapitona 1,8 · tuper 3,2
+
+huida: p = 0,35 + (vel_propia - vel_rival)/100, recortado entre 0,2 y 0,95
+       (no se puede huir de un duelo)
+
+tufo: pierde vida_max/16 al final de cada turno
+aturdido: 25% de perder el turno, velocidad a la mitad
+```
+
+### 7.5 Objetos
+
+`chapita` ($20) · `chapitona` ($60) · `tuper` ($180) · `sanguche` (cura 30, $30)
+· `milanga` (cura 70, $80) · `fernet` (cura todo + estado, $200) · `soda`
+(saca el tufo, $25) · `bizcochito` (revive con media vida, $150).
+
+Perder una batalla cuesta **la mitad de la guita** y te deja curado en el
+kiosco de Ramón.
+
+---
+
+## 8. El sistema de batalla (la parte delicada)
+
+### 8.1 Cola de mensajes
+
+`B.q` es una **cola de pasos**. Cada paso es `{msg, auto}` (texto con efecto
+máquina de escribir; `auto` = frames antes de seguir solo, 0 = espera que
+aprietes A) o `{fn}` (código a ejecutar).
+
+Regla de oro: **lo que un `fn` encola durante su ejecución se inserta justo
+después de ese `fn`, no al final de la cola.** Se implementa con el buffer
+`B.nuevos`:
+
+```js
+if (it.fn) {
+  B.q.shift(); B.nuevos = [];
+  it.fn();
+  if (!B) return;                       // la batalla terminó adentro del paso
+  const n = B.nuevos; B.nuevos = null;
+  if (n.length) B.q = n.concat(B.q);
+}
+```
+
+Sin esto, los mensajes salen desordenados (el "volvés al menú" aparecía antes
+del daño del veneno).
+
+### 8.2 Cancelar el turno
+
+Los pasos que encola `turnoJugador` / `turnoEnemigoSolo` se marcan con
+`_turno = 1` (`marcarTurno(desde)`). Cuando alguien queda K.O., `caida()` hace
+`B.q = B.q.filter(q => !q._turno)`: se descarta lo que quedaba del turno (el
+rival muerto no contraataca) pero **no** lo que vino después (dar experiencia,
+mandar el próximo bicho, terminar la batalla).
+
+> **No vaciar nunca `B.q` entero** desde un menú. Ahí adentro está la
+> continuación de la batalla. Cuando hay que meter mensajes desde un menú se
+> hace `B.q = nuevos.concat(B.q)`. La única excepción es el cambio forzado
+> tras un K.O., donde sí corresponde reemplazar la cola.
+
+### 8.3 Fases
+
+`B.fase`: `cola` (procesando mensajes) · `menu` (PELEAR / BICHO / BOLSO /
+RAJAR) · `ataques` · `cambiar` · `bolso` · `aprender`.
+
+- Sin PP en ningún ataque, PELEAR usa `forcejeo` automáticamente.
+- En el cambio forzado el cursor arranca en el primer bicho **vivo**.
+- Al aprender un quinto ataque se elige cuál olvidar (o NINGUNO).
+
+### 8.4 IA del rival
+
+Puntúa cada ataque disponible por `potencia × efectividad` con un ruido
+aleatorio de ±20% y usa el mejor. Los ataques de estado valen 25 fijo.
+
+### 8.5 Dibujo
+
+Fondo de bandas de color + dos elipses de piso. Caja de vida del rival arriba a
+la izquierda, la tuya abajo a la derecha (con números). Al recibir daño el
+sprite parpadea (`B.flash`) y tiembla (`B.sacudir`).
+
+---
+
+## 9. Guardado
+
+`localStorage['pokesan_avellaneda_96']` con `JSON.stringify(G)`. Se guarda
+manualmente desde START → GUARDAR. Todo va envuelto en `try/catch`: en modo
+incógnito o si el navegador lo bloquea, avisa y el juego sigue andando.
+
+Estado completo:
+
+```js
+G = { nombre, mapa, x, y, dir, equipo[], caja[], guita, objetos{},
+      medallas[], flags{}, vistos{}, pasos, seg }
+```
+
+`equipo` guarda objetos bicho: `{id, mote, lvl, hpMax, hp, exp, estado,
+ataques:[{id, pp, ppMax}]}`. Las estadísticas se recalculan siempre desde
+`BICHOS[id].b` y el nivel, así que se puede rebalancear un bicho sin romper
+partidas viejas.
+
+---
+
+## 10. Audio
+
+`Audio2` es un secuenciador chiptune con WebAudio: onda cuadrada para la
+melodía, triangular para el bajo, ruido blanco para la percusión. Tres temas
+(`barrio` en cumbia, `batalla`, `victoria`) definidos como arrays de notas por
+semicorchea. Los efectos (`bip`, `golpe`, `fuerte`, `chapita`, `capturado`,
+`escapo`, `medalla`, `curar`, `plata`) son osciladores cortos.
+
+El contexto se desbloquea al primer toque/tecla (política de autoplay). Se
+apaga con `M` o el botón SON.
+
+---
+
+## 11. Contenido actual
+
+**Mapas (10):** `casa` · `barrio` (Calle Mitre) · `kiosco` · `taller` ·
+`depto` · `plaza` (Plaza Alsina) · `cancha` · `baldio` · `riachuelo` ·
+`terminal`.
+
+**Recorrido:** casa → taller (te dan el bicho) → plaza (**Doña Rosa**, Medalla
+Escoba) → cancha (**Nacho el Barra**, Medalla Bombo) → baldío (el **Bocha**,
+rival) → Riachuelo (**el Trapito**, Medalla Cuidacoches) → terminal (**el
+Colectivero**, 5 bichos, Pase Libre y final).
+
+**Duelos (15):** kevin, jazmin, brian, maxi, ruli, walter, nahuel, uriel,
+cacho, suplente, inspector, bocha1, rosa★, nacho★, trapito★, colectivero★.
+
+**Puertas cerradas:** la vecina de la plaza no te deja pasar a la cancha sin la
+primera medalla; el Trapito no te deja cruzar el puente sin ganarle.
+
+---
+
+## 12. Cómo extender (recetas)
+
+### Agregar un bicho
+
+1. `src/25_sprites.js` → `MON_ART.nombre = ['...', ...]` (ancho ≤ 24).
+2. `src/30_data.js` → `BICHOS.nombre = {n, t, b, x, cap, ap, d}`.
+3. Ponerlo en la `lista` de encuentros de algún mapa, o en el `eq` de un duelo.
+
+### Agregar un mapa
+
+1. `src/40_maps.js` → nueva entrada en `MAPAS` con `t` (filas del mismo ancho).
+2. Warps de ida **y de vuelta** (los dos mapas).
+3. Vecinos con su entrada en `GENTE`.
+
+### Agregar un vecino que da un objeto una sola vez
+
+```js
+GENTE.fulano = { nom:'Fulano', dial: () => {
+  if (G.flags.fulano) return ['Ya te di, no seas garca.'];
+  G.flags.fulano = 1; darObjeto('milanga', 3);
+  return ['Tomá, llevate unas milangas.', '*Recibiste 3 Milangas!*'];
+}};
+```
+
+### Agregar un tile
+
+`src/20_tiles.js` → 16 filas de 16 caracteres + agregar la letra a `SOLID` si
+frena. Recordar que el fondo va pintado adentro del tile.
+
+### Trampas conocidas
+
+- Las filas de tiles tienen que medir **exacto** 16; hay un validador en el
+  historial de comandos y conviene volver a correrlo.
+- Los caracteres de los mapas y las claves de `PAL` son **espacios de nombres
+  distintos**: `g` es tierra en un mapa y rojo en un sprite.
+- No usar acentos en mayúscula: la tipografía sólo tiene minúsculas acentuadas
+  y `Ñ`.
+- No vaciar `B.q` desde un menú de batalla (ver 8.2).
+
+---
+
+## 13. Pruebas
+
+```sh
+NODE_PATH=$(npm root -g) node test/driver.js   # 16 capturas de pantalla
+NODE_PATH=$(npm root -g) node test/flujo.js    # partida completa automática
+NODE_PATH=$(npm root -g) node test/stress.js   # captura, derrota y fuzzing
+NODE_PATH=$(npm root -g) node test/mapas.js    # una foto de cada mapa
+```
+
+Requiere Playwright y Chromium. `test/flujo.js` y `test/stress.js` usan un
+truco útil: llaman `paso()` en un `while` sincrónico forzando `KP.a = 1`, lo
+que permite jugar 60.000 frames en un segundo y detectar cuelgues. Los tres
+scripts fallan si aparece cualquier excepción en la página.
+
+**Bugs que estos tests encontraron y ya están arreglados** (no reintroducirlos):
+
+1. Mensajes de batalla desordenados por encolar al final en vez de después del
+   paso actual.
+2. Cuelgue total al quedarse sin PP en todos los ataques.
+3. Al aprender un ataque nuevo se vaciaba la cola y la batalla quedaba
+   trabada con el rival en 0 de vida.
+4. El turno seguía corriendo después de que un bicho quedaba K.O.
+5. Cursor sobre un bicho desmayado en el cambio forzado (no dejaba avanzar).
+
+---
+
+## 14. Ideas para estirarlo a 4 horas de juego
+
+Lo que está armado banca esto sin refactor:
+
+- **Más mapas**: el Puente Pueyrredón entero, Sarandí, Wilde, la fábrica
+  abandonada, el tren Roca, la feria, el club de barrio.
+- **Más bichos** hasta 35-40, con una segunda evolución para los iniciales.
+- **Segunda vuelta**: después del Colectivero, un torneo con los cuatro
+  medallistas al hilo, en niveles altos.
+- **Sistema de día/noche** por `G.pasos` o reloj real: cambia la paleta y qué
+  bichos aparecen (el Fernetón sólo de noche ya está insinuado en el texto).
+- **Pesca en el Riachuelo** con caña: otra tabla de encuentros sobre tiles `~`.
+- **Intercambio** entre dos partidas exportando el bicho como código de texto.
+- **Misiones secundarias**: buscarle el perro a la vecina, juntar 10 cartones
+  para Ruli, ganar el picadito.
+- **Línea de visión de los entrenadores** (hoy hay que hablarles): recorrer los
+  tiles en la dirección que miran cada vez que el jugador completa un paso.
+
+===== ARCHIVO: README.md =====
+# Pokesán — Avellaneda 96
+
+Un jueguito de bichos estilo Game Boy Color, pero en las calles de Avellaneda
+en los 90. Chiste y homenaje. Un solo archivo HTML, se abre solo, no necesita
+emulador, ni internet, ni instalar nada.
+
+![título](docs/titulo.png)
+
+## Cómo se juega
+
+1. Bajate **`Pokesan.html`**.
+2. Abrilo. Listo. Se abre en el navegador del celular o de la compu.
+
+Para mandarlo por WhatsApp: adjuntar → **Documento** → elegir `Pokesan.html`.
+Pesa ~120 KB, entra en cualquier lado.
+
+> Si desde WhatsApp no te lo abre directo: tocá "Descargar", después abrilo
+> desde la carpeta **Descargas** con Chrome. La partida se guarda en el
+> teléfono (START → GUARDAR).
+
+### Controles
+
+| | Teclado | Celular |
+|---|---|---|
+| Moverse | Flechas / WASD | Cruceta en pantalla |
+| A (hablar, confirmar) | `Z` / `Espacio` | Botón A |
+| B (volver) | `X` | Botón B |
+| Menú | `Enter` | START |
+| Música on/off | `M` | SON |
+
+## De qué va
+
+Sos un pibe de Calle Mitre. Chirola, el de la ferretería, se puso a estudiar
+los bichos raros que aparecieron en el baldío y te da uno para que le llenes
+la libreta. Hay que juntar tres medallas y ganarle al Colectivero del 22 para
+tener el pase libre de por vida, que es lo máximo a lo que se puede aspirar.
+
+- **10 lugares**: tu pieza, Calle Mitre, el kiosco de Ramón, el taller de
+  Chirola, el depto del 2do B, Plaza Alsina, afuera de la cancha, el baldío,
+  la orilla del Riachuelo y la terminal del 22.
+- **15 bichos**: Chorimón, Yuyín, Riachín, Palomín, Perrucho, Cucaracho,
+  Cumbión, Trapín, Gomón, Materazzo, Fernetón, Bondimón y tres evoluciones.
+- **7 tipos**: GRASA, YUYO, PODRIDO, FIERRO, CHAMUYO, CORRIENTE y VOLADOR,
+  con ventajas y desventajas entre sí.
+- **15 duelos**, incluidas 3 medallas y el jefe final.
+- Chapitas para atrapar bichos, kiosco donde comprar y curar, subir de nivel,
+  aprender ataques, evolucionar, guardado en el teléfono.
+
+Son entre 45 minutos y una hora y pico de juego, según cuánto te pongas a
+cazar bichos.
+
+![batalla](docs/batalla.png) ![calle](docs/calle.png)
+
+![bichos](docs/bichos.png)
+
+## Para meterle mano
+
+El HTML final se arma a partir de `src/`:
+
+```sh
+sh build.sh          # arma Pokesan.html
+```
+
+| archivo | qué tiene |
+|---|---|
+| `src/00_head.html` | HTML, estilos y botones táctiles |
+| `src/10_font.js` | tipografía de 5x7 pixeles dibujada a mano |
+| `src/15_core.js` | pantalla, paleta, sprites, controles, audio, guardado |
+| `src/20_tiles.js` | los tiles de 16x16 (vereda, asfalto, ladrillo, agua...) |
+| `src/25_sprites.js` | gente del barrio y arte de los bichos |
+| `src/30_data.js` | tipos, ataques, bichos y objetos |
+| `src/40_maps.js` | mapas, vecinos, diálogos y duelos |
+| `src/50_mundo.js` | caminar, hablar, encuentros |
+| `src/60_batalla.js` | el sistema de combate |
+| `src/70_menus.js` | menús, kiosco y escenas |
+| `src/80_main.js` | pantalla de título y bucle principal |
+
+Agregar un bicho es sumar su arte en `25_sprites.js` y su ficha en
+`30_data.js`. Agregar un mapa es sumar las filas de tiles y los vecinos en
+`40_maps.js`. Todo el arte es texto: cada caracter es un pixel de la paleta
+definida en `15_core.js`.
+
+### Pruebas
+
+Hay tres scripts que abren el juego en Chromium y lo juegan solos:
+
+```sh
+NODE_PATH=$(npm root -g) node test/driver.js   # capturas de cada pantalla
+NODE_PATH=$(npm root -g) node test/flujo.js    # partida completa hasta el final
+NODE_PATH=$(npm root -g) node test/stress.js   # captura, derrota y teclas al azar
+```
+
+## Nota
+
+Es un homenaje hecho a mano, sin nada de material original de nadie: los
+bichos, los sprites, la tipografía, la música y los mapas están dibujados y
+escritos para este proyecto.
+
+===== ARCHIVO: build.sh =====
+#!/bin/sh
+# Arma el juego entero en un solo archivo HTML autoejecutable.
+set -e
+cd "$(dirname "$0")"
+OUT=Pokesan.html
+{
+  cat src/00_head.html
+  echo '<script>'
+  for f in src/[1-8]*.js; do
+    echo "/* ---- $f ---- */"
+    cat "$f"
+  done
+  echo '</script>'
+  cat src/99_tail.html
+} > "$OUT"
+echo "OK -> $OUT ($(wc -c < "$OUT") bytes)"
+
+===== ARCHIVO: src/00_head.html =====
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#101018">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Pokesán Avellaneda 96</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:#0b0b10;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#8a8a9c;touch-action:none;user-select:none;-webkit-user-select:none}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:4px}
+#screen{flex:0 0 auto;display:block;background:#000;image-rendering:pixelated;image-rendering:crisp-edges;border:3px solid #22222e;border-radius:6px;box-shadow:0 0 0 2px #000,0 6px 18px rgba(0,0,0,.6)}
+#pad{flex:0 0 auto;width:100%;max-width:460px;display:none;justify-content:space-between;align-items:center;padding:0 10px 4px;gap:8px}
+.dpad{position:relative;width:132px;height:132px;flex:0 0 auto}
+.dpad b{position:absolute;background:#2a2a38;border:2px solid #14141c;border-radius:8px;display:block}
+.dpad b:active,.dpad b.on{background:#4a4a63}
+.up{left:44px;top:0;width:44px;height:48px}
+.dn{left:44px;bottom:0;width:44px;height:48px}
+.lf{left:0;top:44px;width:48px;height:44px}
+.rt{right:0;top:44px;width:48px;height:44px}
+.mid{left:44px;top:44px;width:44px;height:44px;background:#2a2a38!important;border-radius:2px}
+.abs{display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+.row2{display:flex;gap:14px;align-items:center}
+.btn{width:60px;height:60px;border-radius:50%;background:#8a2a4a;border:2px solid #14141c;color:#ffd;font:700 20px/58px system-ui;text-align:center}
+.btn.b{background:#2a4a8a}
+.btn:active,.btn.on{filter:brightness(1.5)}
+.mini{display:flex;gap:10px}
+.sbtn{padding:5px 14px;border-radius:12px;background:#2a2a38;border:2px solid #14141c;color:#9a9ab0;font:600 11px/1 system-ui;letter-spacing:.5px}
+.sbtn:active{background:#4a4a63}
+#hint{font-size:11px;letter-spacing:.4px;text-align:center;opacity:.55;padding:0 8px}
+@media (pointer:coarse){#hint{display:none}}
+</style>
+</head>
+<body>
+<div id="app">
+<canvas id="screen" width="160" height="144"></canvas>
+<div id="pad">
+  <div class="dpad">
+    <b class="up" data-k="ArrowUp"></b><b class="lf" data-k="ArrowLeft"></b>
+    <b class="mid"></b>
+    <b class="rt" data-k="ArrowRight"></b><b class="dn" data-k="ArrowDown"></b>
+  </div>
+  <div class="abs">
+    <div class="row2"><b class="btn b" data-k="KeyX">B</b><b class="btn" data-k="KeyZ">A</b></div>
+    <div class="mini"><b class="sbtn" data-k="Enter">START</b><b class="sbtn" data-k="KeyM">SON</b></div>
+  </div>
+</div>
+<div id="hint">Flechas = mover &nbsp;·&nbsp; Z = A &nbsp;·&nbsp; X = B &nbsp;·&nbsp; Enter = MENU &nbsp;·&nbsp; M = musica</div>
+</div>
+
+===== ARCHIVO: src/10_font.js =====
+// ============================================================
+//  FUENTE  5x7 - formato: [caracter][fila_inicial][filas/separadas/por/barra]
+// ============================================================
+const FONT_SRC = `
+ 0
+A0.###./#...#/#...#/#####/#...#/#...#
+B0####./#...#/####./#...#/#...#/####.
+C0.###./#...#/#..../#..../#...#/.###.
+D0####./#...#/#...#/#...#/#...#/####.
+E0#####/#..../####./#..../#..../#####
+F0#####/#..../####./#..../#..../#....
+G0.###./#..../#..##/#...#/#...#/.###.
+H0#...#/#...#/#####/#...#/#...#/#...#
+I0.###./..#../..#../..#../..#../.###.
+J0..###/...#./...#./...#./#..#./.##..
+K0#...#/#..#./###../###../#..#./#...#
+L0#..../#..../#..../#..../#..../#####
+M0#...#/##.##/#.#.#/#...#/#...#/#...#
+N0#...#/##..#/#.#.#/#..##/#...#/#...#
+O0.###./#...#/#...#/#...#/#...#/.###.
+P0####./#...#/#...#/####./#..../#....
+Q0.###./#...#/#...#/#.#.#/#..#./.##.#
+R0####./#...#/#...#/####./#..#./#...#
+S0.####/#..../.###./....#/....#/####.
+T0#####/..#../..#../..#../..#../..#..
+U0#...#/#...#/#...#/#...#/#...#/.###.
+V0#...#/#...#/#...#/#...#/.#.#./..#..
+W0#...#/#...#/#...#/#.#.#/##.##/#...#
+X0#...#/#...#/.#.#./.#.#./#...#/#...#
+Y0#...#/#...#/.#.#./..#../..#../..#..
+Z0#####/....#/...#./..#../.#.../#####
+Ñ0.###./#...#/##..#/#.#.#/#..##/#...#
+a1.###./....#/.####/#...#/.####
+b0#..../#..../####./#...#/#...#/####.
+c1.###./#..../#..../#..../.###.
+d0....#/....#/.####/#...#/#...#/.####
+e1.###./#...#/#####/#..../.###.
+f0..##./.#.../####./.#.../.#.../.#...
+g1.####/#...#/#...#/.####/....#/####.
+h0#..../#..../####./#...#/#...#/#...#
+i0..#../...../..#../..#../..#../..#..
+j0...#./...../...#./...#./...#./#..#./.##..
+k0#..../#..#./#.#../##.../#.#../#..#.
+l0.##../..#../..#../..#../..#../.###.
+m1#####/#.#.#/#.#.#/#.#.#/#.#.#
+n1####./#...#/#...#/#...#/#...#
+o1.###./#...#/#...#/#...#/.###.
+p1####./#...#/#...#/####./#..../#....
+q1.####/#...#/#...#/.####/....#/....#
+r1#.##./##.../#..../#..../#....
+s1.####/#..../.###./....#/####.
+t0.#.../.#.../####./.#.../.#.../..##.
+u1#...#/#...#/#...#/#...#/.####
+v1#...#/#...#/#...#/.#.#./..#..
+w1#...#/#...#/#.#.#/#.#.#/.#.#.
+x1#...#/.#.#./..#../.#.#./#...#
+y1#...#/#...#/#...#/.####/....#/####.
+z1#####/...#./..#../.#.../#####
+ñ0.###./####./#...#/#...#/#...#/#...#
+á0...#./.###./....#/.####/#...#/.####
+é0...#./.###./#...#/#####/#..../.###.
+í0...#./...../..#../..#../..#../..#..
+ó0...#./.###./#...#/#...#/#...#/.###.
+ú0...#./#...#/#...#/#...#/#...#/.####
+ü0.#.#./#...#/#...#/#...#/#...#/.####
+00.###./#..##/#.#.#/##..#/#...#/.###.
+10..#../.##../..#../..#../..#../.###.
+20.###./#...#/...#./..#../.#.../#####
+30####./....#/.###./....#/....#/####.
+40...#./..##./.#.#./#..#./#####/...#.
+50#####/#..../####./....#/#...#/.###.
+60..##./.#.../####./#...#/#...#/.###.
+70#####/....#/...#./..#../.#.../.#...
+80.###./#...#/.###./#...#/#...#/.###.
+90.###./#...#/#...#/.####/...#./.##..
+.5..#..
+,5..#../.#...
+!0..#../..#../..#../..#../...../..#..
+?0.###./#...#/...#./..#../...../..#..
+¿0..#../...../..#../.#.../#...#/.###.
+¡0..#../...../..#../..#../..#../..#..
+'0..#../..#..
+"0.#.#./.#.#.
+-3.###.
+:2..#../...../..#..
+;2..#../...../..#../.#...
+(0...#./..#../.#.../.#.../..#../...#.
+)0.#.../..#../...#./...#./..#../.#...
+/0....#/...#./..#../..#../.#.../#....
+$0..#../.####/#.#../.###./..#.#/####./..#..
+%1##..#/##.#./..#../.#.##/#..##
++2..#../#####/..#..
+=2#####/...../#####
+*1#.#.#/.###./#.#.#
+°0.##../#..#./.##..
+_6#####
+&0.##../#..#./.##../#.#.#/#..#./.##.#
+#1.#.#./#####/.#.#./#####/.#.#.
+>1#..../.#.../..#../.#.../#....
+<1....#/...#./..#../...#./....#
+`;
+
+const GLYPHS = {};
+(function parseFont(){
+  for (const line of FONT_SRC.split('\n')) {
+    if (!line.length) continue;
+    const ch = line[0], top = +line[1];
+    if (isNaN(top)) continue;
+    const rows = line.slice(2).split('/');
+    const pix = []; let w = 0;
+    for (let y = 0; y < rows.length; y++) {
+      for (let x = 0; x < rows[y].length; x++) {
+        if (rows[y][x] === '#') { pix.push([x, top + y]); if (x + 1 > w) w = x + 1; }
+      }
+    }
+    GLYPHS[ch] = { w: w || 3, pix };
+  }
+})();
+
+const FONT_H = 9;                 // alto de linea
+const _atlas = {};                // cache de atlas por color
+
+function glyphAtlas(color) {
+  if (_atlas[color]) return _atlas[color];
+  const keys = Object.keys(GLYPHS);
+  const cv = document.createElement('canvas');
+  cv.width = keys.length * 8; cv.height = 8;
+  const c = cv.getContext('2d');
+  c.fillStyle = color;
+  const pos = {};
+  keys.forEach((k, i) => {
+    pos[k] = i * 8;
+    for (const [x, y] of GLYPHS[k].pix) c.fillRect(i * 8 + x, y, 1, 1);
+  });
+  return (_atlas[color] = { cv, pos });
+}
+
+function textWidth(s) {
+  let w = 0;
+  for (const ch of s) { const g = GLYPHS[ch] || GLYPHS['?']; w += g.w + 1; }
+  return w > 0 ? w - 1 : 0;
+}
+
+// dibuja texto pixel-perfect
+function drawText(c, s, x, y, color) {
+  const a = glyphAtlas(color || '#101018');
+  let cx = x | 0;
+  for (const ch of s) {
+    const g = GLYPHS[ch] || GLYPHS['?'];
+    const p = a.pos[ch] !== undefined ? a.pos[ch] : a.pos['?'];
+    c.drawImage(a.cv, p, 0, 8, 8, cx, y | 0, 8, 8);
+    cx += g.w + 1;
+  }
+  return cx;
+}
+
+// parte un texto en lineas que entren en `maxw` pixeles
+function wrapText(s, maxw) {
+  const out = [];
+  for (const para of String(s).split('\n')) {
+    let line = '';
+    for (const word of para.split(' ')) {
+      const t = line ? line + ' ' + word : word;
+      if (textWidth(t) > maxw && line) { out.push(line); line = word; }
+      else line = t;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+===== ARCHIVO: src/15_core.js =====
+// ============================================================
+//  NUCLEO: pantalla, paleta, sprites, input, audio, guardado
+// ============================================================
+const W = 160, H = 144;
+const cv = document.getElementById('screen');
+const ctx = cv.getContext('2d', { alpha: false });
+ctx.imageSmoothingEnabled = false;
+
+// paleta "conurbano 96"
+const PAL = {
+  '0': '#0f0f14', '1': '#24242f', '2': '#43435a', '3': '#6d6d88', '4': '#a8a8bd', '5': '#e6e6f0',
+  '6': '#5c3a22', '7': '#8f5f33', '8': '#c39355', '9': '#2f6b34', 'a': '#4f9d43', 'b': '#8fc45a',
+  'c': '#1f3f7a', 'd': '#3f7fc8', 'e': '#8fc8f0', 'f': '#a02020', 'g': '#d94b3a', 'h': '#f0a03c',
+  'i': '#f0d858', 'j': '#e8b48c', 'k': '#c98a66', 'l': '#7a2a6a', 'm': '#c85a9a', 'n': '#2a2a1e',
+  'o': '#585848', 'p': '#8a8a70', 'q': '#c8c8a8', 'r': '#3a3a48', 's': '#f5f5ff'
+};
+
+function makeSprite(art, extra) {
+  const h = art.length, w = art[0].length;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const ch = art[y][x];
+    if (ch === '.' || ch === ' ') continue;
+    const col = (extra && extra[ch]) || PAL[ch];
+    if (!col) continue;
+    g.fillStyle = col; g.fillRect(x, y, 1, 1);
+  }
+  return c;
+}
+
+function blit(s, x, y, sc) {
+  sc = sc || 1;
+  ctx.drawImage(s, 0, 0, s.width, s.height, x | 0, y | 0, s.width * sc, s.height * sc);
+}
+function blitFlip(s, x, y, sc) {
+  sc = sc || 1;
+  ctx.save(); ctx.translate((x | 0) + s.width * sc, y | 0); ctx.scale(-1, 1);
+  ctx.drawImage(s, 0, 0, s.width, s.height, 0, 0, s.width * sc, s.height * sc);
+  ctx.restore();
+}
+function rect(x, y, w, h, col) { ctx.fillStyle = col; ctx.fillRect(x | 0, y | 0, w | 0, h | 0); }
+
+// ---- cuadro de dialogo estilo game boy ----
+function panel(x, y, w, h) {
+  rect(x, y, w, h, PAL['5']);
+  rect(x, y, w, 1, PAL['0']); rect(x, y + h - 1, w, 1, PAL['0']);
+  rect(x, y, 1, h, PAL['0']); rect(x + w - 1, y, 1, h, PAL['0']);
+  rect(x + 2, y + 2, w - 4, 1, PAL['2']); rect(x + 2, y + h - 3, w - 4, 1, PAL['2']);
+  rect(x + 2, y + 2, 1, h - 4, PAL['2']); rect(x + w - 3, y + 2, 1, h - 4, PAL['2']);
+}
+
+// ---- input ----
+const K = { up: 0, dn: 0, lf: 0, rt: 0, a: 0, b: 0, st: 0 };
+const KP = { up: 0, dn: 0, lf: 0, rt: 0, a: 0, b: 0, st: 0 };   // "recien apretado"
+const MAPK = {
+  ArrowUp: 'up', KeyW: 'up', ArrowDown: 'dn', KeyS: 'dn', ArrowLeft: 'lf', KeyA: 'lf',
+  ArrowRight: 'rt', KeyD: 'rt', KeyZ: 'a', Space: 'a', KeyJ: 'a', KeyX: 'b', KeyK: 'b',
+  Backspace: 'b', Enter: 'st', Escape: 'st'
+};
+function setKey(name, v) {
+  if (!name) return;
+  if (v && !K[name]) KP[name] = 1;
+  K[name] = v;
+}
+addEventListener('keydown', e => {
+  if (e.code === 'KeyM' && !e.repeat) { Audio2.toggle(); e.preventDefault(); return; }
+  const n = MAPK[e.code]; if (n) { if (!e.repeat) setKey(n, 1); e.preventDefault(); }
+});
+addEventListener('keyup', e => { const n = MAPK[e.code]; if (n) { setKey(n, 0); e.preventDefault(); } });
+
+function clearPressed() { for (const k in KP) KP[k] = 0; }
+
+// ---- controles tactiles ----
+(function touchPad() {
+  const pad = document.getElementById('pad');
+  const coarse = matchMedia('(pointer:coarse)').matches || 'ontouchstart' in window;
+  if (coarse) pad.style.display = 'flex';
+  const btns = [...pad.querySelectorAll('[data-k]')];
+  const zones = () => btns.map(b => ({ b, r: b.getBoundingClientRect(), k: MAPK[b.dataset.k], raw: b.dataset.k }));
+  let Z = zones(); addEventListener('resize', () => setTimeout(() => Z = zones(), 60));
+  const active = new Map();
+  function apply() {
+    const on = new Set([...active.values()].flat());
+    for (const z of Z) {
+      const hit = on.has(z.raw);
+      z.b.classList.toggle('on', hit);
+      if (z.raw === 'KeyM') { if (hit && !z._m) { z._m = 1; Audio2.toggle(); } if (!hit) z._m = 0; }
+      else setKey(z.k, hit ? 1 : 0);
+    }
+  }
+  function upd(e) {
+    e.preventDefault();
+    active.clear();
+    for (const t of e.touches) {
+      const hits = [];
+      for (const z of Z) {
+        const r = z.r, m = 6;
+        if (t.clientX >= r.left - m && t.clientX <= r.right + m && t.clientY >= r.top - m && t.clientY <= r.bottom + m) hits.push(z.raw);
+      }
+      if (hits.length) active.set(t.identifier, hits);
+    }
+    apply();
+    Audio2.unlock();
+  }
+  ['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach(ev => pad.addEventListener(ev, upd, { passive: false }));
+  addEventListener('pointerdown', () => Audio2.unlock(), { once: false });
+})();
+
+// ---- escalado a pantalla ----
+function resize() {
+  const pad = document.getElementById('pad');
+  const padH = pad.style.display === 'flex' ? 150 : 26;
+  const availW = innerWidth - 14, availH = innerHeight - padH - 16;
+  let s = Math.min(availW / W, availH / H);
+  if (s >= 1) s = Math.max(1, Math.floor(s * 2) / 2);
+  cv.style.width = Math.floor(W * s) + 'px';
+  cv.style.height = Math.floor(H * s) + 'px';
+}
+addEventListener('resize', resize); addEventListener('orientationchange', () => setTimeout(resize, 120));
+
+// ---- random ----
+const rnd = n => Math.floor(Math.random() * n);
+const chance = p => Math.random() < p;
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+// ---- guardado ----
+const SAVEKEY = 'pokesan_avellaneda_96';
+function saveGame(data) { try { localStorage.setItem(SAVEKEY, JSON.stringify(data)); return true; } catch (e) { return false; } }
+function loadGame() { try { return JSON.parse(localStorage.getItem(SAVEKEY) || 'null'); } catch (e) { return null; } }
+function eraseGame() { try { localStorage.removeItem(SAVEKEY); } catch (e) { } }
+
+// ============================================================
+//  AUDIO: chiptune casero (cumbia de bondi + batalla)
+// ============================================================
+const Audio2 = (function () {
+  let ac = null, master = null, on = true, timer = null, cur = null, step = 0, nextT = 0;
+  const N = {};
+  (function notes() {
+    const nm = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    for (let o = 1; o <= 7; o++) for (let i = 0; i < 12; i++)
+      N[nm[i] + o] = 440 * Math.pow(2, (i - 9 + (o - 4) * 12) / 12);
+  })();
+  const _ = null;
+  const SONGS = {
+    barrio: {
+      bpm: 132,
+      lead: ['E5', _, 'G5', _, 'A5', _, 'G5', _, 'E5', _, 'D5', _, 'E5', _, _, _,
+             'C5', _, 'E5', _, 'G5', _, 'E5', _, 'D5', _, 'B4', _, 'C5', _, _, _,
+             'A4', _, 'C5', _, 'E5', _, 'C5', _, 'B4', _, 'D5', _, 'B4', _, _, _,
+             'G4', _, 'B4', _, 'D5', _, 'B4', _, 'A4', _, 'B4', _, 'C5', _, _, _],
+      bass: ['A2', _, _, 'A2', _, 'E2', _, _, 'A2', _, _, 'A2', _, 'E2', _, _,
+             'C3', _, _, 'C3', _, 'G2', _, _, 'G2', _, _, 'G2', _, 'D2', _, _,
+             'A2', _, _, 'A2', _, 'E2', _, _, 'F2', _, _, 'F2', _, 'C3', _, _,
+             'G2', _, _, 'G2', _, 'D3', _, _, 'C3', _, _, 'C3', _, 'E2', _, _],
+      perc: [1, 0, 2, 0, 1, 0, 2, 0, 1, 0, 2, 0, 1, 0, 2, 2]
+    },
+    batalla: {
+      bpm: 168,
+      lead: ['A4', 'A4', 'C5', 'E5', 'A5', _, 'G5', 'E5', 'F5', _, 'E5', 'D5', 'C5', _, _, _,
+             'G4', 'G4', 'B4', 'D5', 'G5', _, 'F5', 'D5', 'E5', _, 'D5', 'C5', 'B4', _, _, _,
+             'F4', 'F4', 'A4', 'C5', 'F5', _, 'E5', 'C5', 'D5', _, 'C5', 'B4', 'A4', _, _, _,
+             'E5', _, 'E5', _, 'F5', _, 'G5', _, 'A5', _, 'G5', 'F5', 'E5', _, _, _],
+      bass: ['A2', 'A2', _, 'A2', 'A2', _, 'A2', _, 'A2', 'A2', _, 'A2', 'E2', _, 'E2', _,
+             'G2', 'G2', _, 'G2', 'G2', _, 'G2', _, 'G2', 'G2', _, 'G2', 'D2', _, 'D2', _,
+             'F2', 'F2', _, 'F2', 'F2', _, 'F2', _, 'F2', 'F2', _, 'F2', 'C3', _, 'C3', _,
+             'E2', 'E2', _, 'E2', 'E2', _, 'E2', _, 'A2', 'A2', _, 'A2', 'E2', _, 'E2', _],
+      perc: [1, 0, 1, 0, 2, 0, 1, 0, 1, 0, 1, 0, 2, 0, 2, 2]
+    },
+    victoria: {
+      bpm: 150, once: true,
+      lead: ['C5', 'E5', 'G5', 'C6', _, 'G5', 'C6', _, _, _, _, _, _, _, _, _],
+      bass: ['C3', _, 'C3', _, 'G2', _, 'C3', _, _, _, _, _, _, _, _, _],
+      perc: [1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    }
+  };
+
+  function init() {
+    if (ac) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ac = new AC();
+    master = ac.createGain(); master.gain.value = 0.16; master.connect(ac.destination);
+  }
+  function tone(type, freq, t, dur, vol) {
+    if (!freq) return;
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function noise(t, dur, vol) {
+    const n = ac.sampleRate * dur | 0;
+    const buf = ac.createBuffer(1, Math.max(1, n), ac.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const s = ac.createBufferSource(); s.buffer = buf;
+    const g = ac.createGain(); g.gain.value = vol;
+    s.connect(g); g.connect(master); s.start(t);
+  }
+  function tick() {
+    if (!ac || !cur || !on) return;
+    const song = SONGS[cur], spb = 60 / song.bpm / 2;
+    while (nextT < ac.currentTime + 0.25) {
+      const i = step % song.lead.length;
+      tone('square', N[song.lead[i]], nextT, spb * 1.6, 0.30);
+      tone('triangle', N[song.bass[i % song.bass.length]], nextT, spb * 1.9, 0.55);
+      const p = song.perc[i % song.perc.length];
+      if (p === 1) noise(nextT, 0.05, 0.28);
+      if (p === 2) noise(nextT, 0.03, 0.13);
+      nextT += spb; step++;
+      if (song.once && step >= song.lead.length) { cur = null; break; }
+    }
+  }
+  return {
+    unlock() { init(); if (ac && ac.state === 'suspended') ac.resume(); },
+    play(name) {
+      if (cur === name) return;
+      this.unlock(); if (!ac) return;
+      cur = name; step = 0; nextT = ac.currentTime + 0.05;
+      if (!timer) timer = setInterval(tick, 60);
+    },
+    stop() { cur = null; },
+    toggle() {
+      on = !on;
+      this.unlock();
+      if (master) master.gain.value = on ? 0.16 : 0;
+    },
+    isOn() { return on; },
+    sfx(kind) {
+      this.unlock(); if (!ac || !on) return;
+      const t = ac.currentTime;
+      if (kind === 'bip') tone('square', 900, t, 0.05, 0.25);
+      else if (kind === 'sel') { tone('square', 700, t, 0.04, 0.25); tone('square', 1100, t + 0.05, 0.06, 0.22); }
+      else if (kind === 'golpe') { noise(t, 0.09, 0.4); tone('square', 160, t, 0.1, 0.3); }
+      else if (kind === 'flojo') { noise(t, 0.06, 0.2); tone('square', 110, t, 0.08, 0.2); }
+      else if (kind === 'fuerte') { noise(t, 0.16, 0.5); tone('sawtooth', 90, t, 0.18, 0.35); }
+      else if (kind === 'chapita') { tone('square', 500, t, 0.06, 0.25); tone('square', 800, t + 0.07, 0.08, 0.25); }
+      else if (kind === 'capturado') { [660, 830, 990, 1320].forEach((f, i) => tone('square', f, t + i * 0.09, 0.12, 0.25)); }
+      else if (kind === 'escapo') { [900, 700, 500].forEach((f, i) => tone('square', f, t + i * 0.06, 0.08, 0.22)); }
+      else if (kind === 'medalla') { [523, 659, 784, 1046, 1318].forEach((f, i) => tone('square', f, t + i * 0.11, 0.2, 0.26)); }
+      else if (kind === 'curar') { [440, 554, 659].forEach((f, i) => tone('triangle', f, t + i * 0.1, 0.18, 0.4)); }
+      else if (kind === 'plata') { tone('square', 1200, t, 0.05, 0.22); tone('square', 1600, t + 0.06, 0.07, 0.2); }
+    }
+  };
+})();
+
+===== ARCHIVO: src/20_tiles.js =====
+// ============================================================
+//  TILES 16x16  (el barrio, ladrillo por ladrillo)
+// ============================================================
+const TILE = 16;
+const TILE_ART = {
+  // vereda rota
+  '.': ['3333333333333333','3444444434444444','3444444434444444','3444443434444444',
+        '3444444434444444','3444444434444444','3434444434444443','3444444434444444',
+        '3333333333333333','3444444434444444','3444444434444444','3444444434444443',
+        '3444444434434444','3444444434444444','3444444434444444','3444444434444444'],
+  // asfalto
+  ',': ['2222122222221222','2222222212222222','2122222222222221','2222232222222222',
+        '2222222222122222','2212222222222222','2222222122222232','2222222222222222',
+        '2322222222212222','2222122222222222','2222222222222122','2122222222222222',
+        '2222222232222222','2222212222222222','2222222222222212','2222222222122222'],
+  // asfalto con linea blanca
+  '-': ['2222122222221222','2222222212222222','2122222222222221','2222232222222222',
+        '2222222222122222','2212222222222222','2222222122222232','4444444422222222',
+        '4444444422212222','2222122222222222','2222222222222122','2122222222222222',
+        '2222222232222222','2222212222222222','2222222222222212','2222222222122222'],
+  // linea blanca vertical
+  '!': ['2222122222221222','2222222212222222','2122222444222221','2222222444222222',
+        '2222222444122222','2212222444222222','2222222444222232','2222222444222222',
+        '2322222222212222','2222122222222222','2222222222222122','2122222222222222',
+        '2222222232222222','2222212222222222','2222222222222212','2222222222122222'],
+  // pasto corto
+  '"': ['9999999999999999','99a999999999a999','9999999999999999','999999a999999999',
+        '9999999999999999','9a999999999999a9','9999999999999999','999999999a999999',
+        '9999a99999999999','9999999999999999','99999999a9999999','999a999999999999',
+        '9999999999999999','99999999999a9999','9a9999999999a999','9999999999999999'],
+  // yuyal (aca aparecen los bichos)
+  '*': ['9999999999999999','9999999999999999','999a9999999a9999','99aba99999aba999',
+        '9abbba999abbba99','99aba99999aba999','999a9999999a9999','9999999999999999',
+        '9999999999999999','9999999a99999999','999999aba9999999','99999abbba999999',
+        '999999aba9999999','9999999a99999999','9999999999999999','9999999999999999'],
+  // el riachuelo (no te metas)
+  '~': ['cccccccccccccccc','ccccdddcccccdddc','cccddedcccddedcc','cccccccccccccccc',
+        'cdddccccdddccccc','ddedccccddedcccc','cccccccccccccccc','ccccccdddccccddd',
+        'cccccddedcccdded','cccccccccccccccc','cdddcccccdddcccc','ddedccccddedcccc',
+        'cccccccccccccccc','cccccdddcccccddd','ccccddedccccdded','cccccccccccccccc'],
+  // pared de ladrillo
+  '#': ['6666666666666666','8888888688888886','8888888688888886','8888888688888886',
+        '6666666666666666','8886888888868888','8886888888868888','8886888888868888',
+        '6666666666666666','8888888688888886','8888888688888886','8888888688888886',
+        '6666666666666666','8886888888868888','8886888888868888','8886888888868888'],
+  // pared con ventana
+  'W': ['6666666666666666','8888888688888886','8888888688888886','8888888688888886',
+        '6663333333333666','8883ssee3eee3888','8883seee3eee3888','8883eeee3eee3888',
+        '8883eeee3eee3888','8883dddd3ddd3888','8883dddd3ddd3888','8883dddd3ddd3888',
+        '8883333333333888','8886888888868888','8886888888868888','8886888888868888'],
+  // puerta
+  'D': ['6666666666666666','8888888688888886','8888888688888886','8880000000000888',
+        '8880777777770888','8880766666670888','8880766666670888','8880766666670888',
+        '8880777777770888','8880777777i70888','8880766666670888','8880766666670888',
+        '8880766666670888','8880777777770888','8880777777770888','8880000000000888'],
+  // arbol de plaza (sobre pasto)
+  'Y': ['99999aaaaaa99999','999abbbbbbbba999','99abbbbbbbbbba99','99abbbb9bbbbba99',
+        '99abbbbbbbbbba99','999abbbbbbbba999','99999aabbaa99999','9999999669999999',
+        '9999999669999999','9999999669999999','9999999669999999','9999999669999999',
+        '9999999669999999','9999996669999999','9999996666999999','9999999999999999'],
+  // arbol de vereda
+  'T': ['44444aaaaaa44444','444abbbbbbbba444','44abbbbbbbbbba44','44abbbb9bbbbba44',
+        '44abbbbbbbbbba44','444abbbbbbbba444','44444aabbaa44444','4444444664444444',
+        '4444444664444444','4444444664444444','4444444664444444','4444444664444444',
+        '4444444664444444','4444446664444444','4444446666444444','4444444444444444'],
+  // paredon con graffiti (aguante)
+  'R': ['4444444444444444','4344444444444434','4444444444444444','4444444444444444',
+        '44gg4444444gg444','4g44g444444g4g44','4g44g444gg4g4g44','4gggg444g44ggg44',
+        '4g44g444g4444g44','4g44g4444gg44g44','4444444444444444','4344444444443444',
+        '4444444444444444','4444444444444444','3333333333333333','2222222222222222'],
+  // alambrado
+  '|': ['3333333333333333','9993999399939993','9993999399939993','9993999399939993',
+        '9993999399939993','9993999399939993','9993999399939993','3333333333333333',
+        '9993999399939993','9993999399939993','9993999399939993','9993999399939993',
+        '9993999399939993','9993999399939993','3333333333333333','2222222222222222'],
+  // contenedor de basura
+  'C': ['4444444444444444','4444444444444444','4400000000000044','440gggggggggg044',
+        '440gggggggggg044','4400000000000044','440ffffffffff044','440ffffffffff044',
+        '440ffffffffff044','440f00000000f044','440ffffffffff044','440ffffffffff044',
+        '440ffffffffff044','4400000000000044','4444004444004444','4444444444444444'],
+  // poste de luz
+  'L': ['4444400000044444','444440iiii044444','4444440000444444','4444444224444444',
+        '4444444224444444','4444444224444444','4444444224444444','4444444224444444',
+        '4444444224444444','4444444224444444','4444444224444444','4444444224444444',
+        '4444444224444444','4444444224444444','4444444334444444','4444443334444444'],
+  // banco de plaza
+  'B': ['9999999999999999','9999999999999999','9999999999999999','9777777777777779',
+        '9666666666666669','9999999999999999','9777777777777779','9666666666666669',
+        '9922999999992299','9922999999992299','9922999999992299','9999999999999999',
+        '9999999999999999','9999999999999999','9999999999999999','9999999999999999'],
+  // cartel de la calle
+  'S': ['4444444444444444','4444444444444444','4400000000000044','440ssssssssss044',
+        '440s00ss0ss0s044','440ss0s00s0ss044','440s0ss0s0s0s044','440ssssssssss044',
+        '4400000000000044','4444444664444444','4444444664444444','4444444664444444',
+        '4444444664444444','4444444664444444','4444444664444444','4444444334444444'],
+  // tierra
+  'g': ['7778777777787777','7777767777777777','7877777777767778','7777777877777777',
+        '7677777777777767','7777787777777777','7777777777877777','7877777767777777',
+        '7777777777777787','7777677777777777','7787777777777677','7777777787777777',
+        '6777777777777777','7777787777777877','7777777777777777','7777677777787777'],
+  // escombros
+  'n': ['7777777777777777','7774447777444777','7744444774444477','7744444774444477',
+        '7764446776444667','7777777777777777','7444777744477777','7444477744477777',
+        '7444477764446777','7664467777777777','7777777774444777','7777444774444477',
+        '7774444774444467','7776644477664777','7777777777777777','7777777777777777'],
+  // piso de baldosa (interior)
+  'F': ['8888888888888888','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq',
+        '8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq',
+        '8888888888888888','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq',
+        '8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq'],
+  // pared interior con empapelado
+  'X': ['qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq',
+        'qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq',
+        'qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq','8888888888888888','8888888888888888',
+        '7777777777777777','8888888888888888','8888888888888888','8888888888888888'],
+  // la cama del pibe
+  'b': ['6666666666666666','6ssssssssssssss6','6ssssssssssssss6','6ssssssssssssss6',
+        '6ssssssssssssss6','6gggggggggggggg6','6gggggggggggggg6','6gggggggggggggg6',
+        '6ffffffffffffff6','6gggggggggggggg6','6gggggggggggggg6','6gggggggggggggg6',
+        '6ffffffffffffff6','6gggggggggggggg6','6gggggggggggggg6','6666666666666666'],
+  // el televisor (con la de Independiente)
+  't': ['qqq3qqqqqqqq3qqq','qqqq3qqqqqq3qqqq','qqqqq3qqqq3qqqqq','q00000000000000q',
+        'q01eeeeeeeeee10q','q01eedeeeeede10q','q01eedddeedde10q','q01eeedeedeee10q',
+        'q01eeeeeeeeee10q','q01edeeeeeeed10q','q01eeeeeeeeee10q','q01111111111110q',
+        'q01ii11111ii110q','q00000000000000q','qq00qqqqqqqq00qq','qqqqqqqqqqqqqqqq'],
+  // mostrador del kiosco
+  'M': ['qqqqqqqqqqqqqqqq','0000000000000000','8888888888888888','8888888888888888',
+        '0000000000000000','7776777677767776','7776777677767776','7776777677767776',
+        '7776777677767776','7776777677767776','7776777677767776','7776777677767776',
+        '7776777677767776','7776777677767776','7776777677767776','0000000000000000'],
+  // heladera del kiosco
+  'H': ['0000000000000000','0333333333333330','03eeeeeeeeeeee30','03egg0dd0ii0gd30',
+        '03egg0dd0ii0gd30','03egg0dd0ii0gd30','03e0000000000e30','03edd0ii0gg0dg30',
+        '03edd0ii0gg0dg30','03edd0ii0gg0dg30','03e0000000000e30','03eii0gg0dd0ig30',
+        '03eii0gg0dd0ig30','03eii0gg0dd0ig30','0333333333333330','0000000000000000'],
+  // felpudo de salida
+  'E': ['qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq',
+        'qqqqqqqqqqqqqqqq','qq000000000000qq','qq0ffffffffff0qq','qq0f0f0f0f0f00qq',
+        'qq0ffffffffff0qq','qq0f0f0f0f0f00qq','qq0ffffffffff0qq','qq000000000000qq',
+        'qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq'],
+  // tierra de la canchita
+  'A': ['8888788888878888','8888888878888888','8788888888888878','8888878888888888',
+        '8788888888887888','8888888888888888','8888878888788888','8888888888888888',
+        '8878888888888788','8888888878888888','8888888888887888','8788888888888888',
+        '8888888788888888','8888888888788888','8878888888888888','8888878888888888'],
+  // tribuna
+  'V': ['3333333333333333','2222222222222222','2gg22gg22gg22gg2','3333333333333333',
+        '2222222222222222','2gg22gg22gg22gg2','3333333333333333','2222222222222222',
+        '2gg22gg22gg22gg2','3333333333333333','2222222222222222','2gg22gg22gg22gg2',
+        '3333333333333333','2222222222222222','2222222222222222','3333333333333333'],
+  // puente (tablones)
+  'P': ['3333333333333333','3444444434444444','3444444434444444','3333333333333333',
+        '3444444434444444','3444444434444444','3333333333333333','3444444434444444',
+        '3444444434444444','3333333333333333','3444444434444444','3444444434444444',
+        '3333333333333333','3444444434444444','3444444434444444','3333333333333333'],
+  // baranda del puente
+  'Q': ['cccccccccccccccc','3333333333333333','2222222222222222','ccc3cccccccc3ccc',
+        'ccc3cccccccc3ccc','3333333333333333','ccc3cccccccc3ccc','ccc3cccccccc3ccc',
+        '3333333333333333','2222222222222222','3333333333333333','2222222222222222',
+        '2222222222222222','2222222222222222','2222222222222222','2222222222222222']
+};
+
+// que tiles te frenan
+const SOLID = '#WTYR|CLBSnXbtMHV~Q';
+const TILES = {};
+for (const k in TILE_ART) TILES[k] = makeSprite(TILE_ART[k]);
+
+===== ARCHIVO: src/25_sprites.js =====
+// ============================================================
+//  SPRITES: gente del barrio + bichos
+// ============================================================
+// completa las filas cortas con transparente asi no hay que contar pixeles
+function padArt(rows) {
+  let w = 0; for (const r of rows) if (r.length > w) w = r.length;
+  return rows.map(r => r + '.'.repeat(w - r.length));
+}
+function mkArt(rows, colors) { return makeSprite(padArt(rows), colors); }
+
+// --- persona generica: H pelo, K piel, S remera, P pantalon, Z zapas, O contorno
+const P_DOWN = [
+  '................','....OOOOOOOO....','...OHHHHHHHHO...','...OHHHHHHHHO...',
+  '...OHHHHHHHHO...','...OKKKKKKKKO...','...OKOKKKKOKO...','...OKKKKKKKKO...',
+  '....OKKKKKKO....','..OOSSSSSSSSOO..','..OKSSSSSSSSKO..','..OKSSSSSSSSKO..',
+  '..OOSSSSSSSSOO..','...OPPPOOPPPO...','...OPPPOOPPPO...','...OZZO..OZZO...'];
+const P_UP = [
+  '................','....OOOOOOOO....','...OHHHHHHHHO...','...OHHHHHHHHO...',
+  '...OHHHHHHHHO...','...OHHHHHHHHO...','...OHHHHHHHHO...','...OHHHHHHHHO...',
+  '....OHHHHHHO....','..OOSSSSSSSSOO..','..OKSSSSSSSSKO..','..OKSSSSSSSSKO..',
+  '..OOSSSSSSSSOO..','...OPPPOOPPPO...','...OPPPOOPPPO...','...OZZO..OZZO...'];
+const P_SIDE = [
+  '................','.....OOOOOOO....','....OHHHHHHHO...','....OHHHHHHHO...',
+  '....OHHHHHKKO...','....OKKKKKKKO...','....OKKKKOKKO...','....OKKKKKKKO...',
+  '.....OKKKKKO....','...OOSSSSSSOO...','...OKSSSSSSKO...','...OKSSSSSSKO...',
+  '...OOSSSSSSOO...','....OPPPPPPO....','....OPPPPPPO....','....OZZZZZZO....'];
+// patas del segundo cuadro (caminando)
+const LEGS2 = {
+  d: ['...OPPPOOPPPO...','..OPPPPOOPPPPO..','..OZZO....OZZO..'],
+  s: ['....OPPPPPPO....','...OPPPO.OPPO...','...OZZO...OZZO..']
+};
+function legsSwap(base, alt) {
+  const a = base.slice(0, 13).concat(alt);
+  return a;
+}
+const CAP_DOWN = ['','','','','..VVVVVVVVVVVV..'];
+const CAP_SIDE = ['','','','','....VVVVVVVVVV..'];
+const HAIR_DOWN = ['','','','','','..VV........VV..','..VV........VV..','..VV........VV..','...V........V...'];
+
+function buildPerson(col) {
+  const C = { O: PAL['0'], H: col.pelo, K: col.piel || PAL['j'], S: col.remera, P: col.pant || PAL['c'], Z: col.zapas || PAL['1'], V: col.extraCol || col.pelo };
+  function comp(base, over, legs) {
+    let rows = base.slice();
+    if (legs) rows = rows.slice(0, 13).concat(legs);
+    if (over) rows = rows.map((r, i) => {
+      const o = over[i]; if (!o) return r;
+      let out = '';
+      for (let x = 0; x < r.length; x++) out += (o[x] && o[x] !== '.') ? o[x] : r[x];
+      return out;
+    });
+    return makeSprite(rows, C);
+  }
+  const over = col.gorra ? CAP_DOWN : (col.pelolargo ? HAIR_DOWN : null);
+  const overS = col.gorra ? CAP_SIDE : (col.pelolargo ? HAIR_DOWN : null);
+  return {
+    d: [comp(P_DOWN, over, null), comp(P_DOWN, over, LEGS2.d)],
+    u: [comp(P_UP, col.gorra ? null : (col.pelolargo ? HAIR_DOWN : null), null),
+        comp(P_UP, col.gorra ? null : (col.pelolargo ? HAIR_DOWN : null), LEGS2.d)],
+    s: [comp(P_SIDE, overS, null), comp(P_SIDE, overS, LEGS2.s)]
+  };
+}
+
+// --- perro callejero del overworld
+const DOG_ART = [
+  '................','................','................','................',
+  '...OO......OO...','..OHHO....OHHO..','..OHHHOOOOHHHO..','.OHHHHHHHHHHHHO.',
+  '.OHHHHHHHHHHHHO.','.OHOHHHHHHHHHHO.','.OHHHHHHHHHHHHO.','..OHHHHHHHHHHO..',
+  '..OHHO..OHHO....','..OHHO..OHHO....','..OOOO..OOOO....','................'];
+
+// ============================================================
+//  BICHOS  (arte de batalla, se dibuja x2)
+// ============================================================
+const MON_ART = {
+  yuyin: [
+    '..........aa',
+    '.........abba',
+    '...aa....abbba',
+    '..abba...abbba...aa',
+    '.abbbba..abbba..abba',
+    '.abbbbba..abba.abbbba',
+    '..abbbba...aa..abbbba',
+    '...abba....aa...abba',
+    '....a......aa....a',
+    '..........aaaa',
+    '........9aaaaaa9',
+    '.......9aabbbbaa9',
+    '......9aabbbbbbaa9',
+    '......9ab0bbbb0ba9',
+    '......9abbbbbbbba9',
+    '......9abb0000bba9',
+    '......9aabbbbbbaa9',
+    '.......9aabbbbaa9',
+    '........99aaaa99',
+    '.........7....7',
+    '........77....77',
+    '.......77......77'],
+  yuyaco: [
+    '.........m..m',
+    '........mimim',
+    '.........mmm',
+    '..........a',
+    '...aa.....a.....aa',
+    '..abba....a....abba',
+    '.abbbba...a...abbbba',
+    '.abbbbba..a..abbbbba',
+    '..abbbba..a..abbbba',
+    '...abba..aaa..abba',
+    '......99aaaaaa99',
+    '.....9aabbbbbbaa9',
+    '....9aabbbbbbbbaa9',
+    '....9ab0bbbbbb0ba9',
+    '....9abbbbbbbbbba9',
+    '....9abb000000bba9',
+    '....9ab0bbbbbb0ba9',
+    '....9aabbbbbbbbaa9',
+    '.....9aabbbbbbaa9',
+    '......99aaaaaa99',
+    '.......7......7',
+    '......77........77',
+    '.....77..........77'],
+  chorimon: [
+    '...88888888888888',
+    '..8888888888888888',
+    '.888888888888888888',
+    '.888888888888888888',
+    '.88aaaaaaaaaaaaaa88',
+    'gggggggggggggggggggg',
+    'gg0gggggggggggg0gggg',
+    'gggggggggggggggggggg',
+    'ggggg0000000000ggggg',
+    'gggggggggggggggggggg',
+    '.88aaaaaaaaaaaaaa88',
+    '.888888888888888888',
+    '.888888888888888888',
+    '..8888888888888888',
+    '...88888888888888'],
+  chorizon: [
+    '....88888888888888',
+    '..888888888888888888',
+    '.88888888888888888888',
+    '.88888888888888888888',
+    '.888aaaaaaaaaaaaaa888',
+    'gggggggggggggggggggggg',
+    'gg0gggggggggggggg0gggg',
+    'gggggggggggggggggggggg',
+    'gggg00000000000000gggg',
+    'gggggggggggggggggggggg',
+    '.888aaaaaaaaaaaaaa888',
+    '.88888888888888888888',
+    'gggggggggggggggggggggg',
+    'gg0gggggggggggggg0gggg',
+    'gggg00000000000000gggg',
+    'gggggggggggggggggggggg',
+    '.88888888888888888888',
+    '..888888888888888888',
+    '....88888888888888'],
+  riachin: [
+    '..........0',
+    '.........090',
+    '........09a90',
+    '........0aa90',
+    '.......09aaa90',
+    '......09aaaaa90',
+    '.....09aaaaaaa90',
+    '....09aaaaaaaaa90',
+    '....0aaaaaaaaaa90',
+    '...09aa0aaaa0aa90',
+    '...09aaaaaaaaaaa90',
+    '...09aaaaaaaaaaa90',
+    '...09aaa000000aa90',
+    '...09aaaaaaaaaaa90',
+    '....09aaaaaaaaa90',
+    '.....099999999990',
+    '......0000000'],
+  riachonzo: [
+    '.....0..........0',
+    '....090........090',
+    '....0a90......09a0',
+    '...09aa90....09aa90',
+    '...0aaaa9....9aaaa0',
+    '..09aaaaa9999aaaaa90',
+    '..09aaaaaaaaaaaaaa90',
+    '.09aaa0aaaaaaaa0aaa90',
+    '.09aaaaaaaaaaaaaaaa90',
+    '.09aaaaaaaaaaaaaaaa90',
+    '.09aa000000000000aa90',
+    '.09aa0aaaaaaaaaa0aa90',
+    '.09aaaaaaaaaaaaaaaa90',
+    '..09aaaaaaaaaaaaaa90',
+    '..009aaaaaaaaaaaa900',
+    '....099999999999990',
+    '.....00000000000'],
+  palomin: [
+    '',
+    '.......333333',
+    '......34444443',
+    '.....3444444443',
+    '.....34404440443',
+    '.....3444444443hh',
+    '.....34444444443hh',
+    '...333444444433',
+    '..34444444444443',
+    '.3444444444444443',
+    '.3444444444444443',
+    '..34444444444443',
+    '...344444444443',
+    '....3344444433',
+    '......344443',
+    '.......h..h',
+    '......hh..hh'],
+  perrucho: [
+    '',
+    '...77........77',
+    '..7887......7887',
+    '..78887777778887',
+    '.7888888888888887',
+    '.7888888888888887',
+    '.78808888888880887',
+    '.7888888888888887',
+    '.7888880008888887',
+    '..78888888888887',
+    '..7888888888887',
+    '..78888888888887',
+    '..7887..7887',
+    '..7887..7887',
+    '..7777..7777'],
+  cucaracho: [
+    '...0............0',
+    '....0..........0',
+    '.....0........0',
+    '......07777770',
+    '.....7766667777',
+    '....776666666677',
+    '...77660666066677',
+    '...7766666666677',
+    '..776600660066777',
+    '..77666666666677',
+    '.0776666666666770',
+    '.0776666666666770',
+    '.0.7766666666777.0',
+    '....77666666777',
+    '.....77777777',
+    '....0..0..0..0',
+    '...0...0..0...0'],
+  cumbion: [
+    '',
+    '..llllllllllllll',
+    '..l0000000000000l',
+    '..l0mmmm00mmmm0l',
+    '..l0m00m00m00m0l',
+    '..l0m0im00mi0m0l',
+    '..l0m00m00m00m0l',
+    '..l0mmmm00mmmm0l',
+    '..l000000000000l',
+    '..l0iiiiiiiiii0l',
+    '..l0i00iiii00i0l',
+    '..l0iiiiiiiiii0l',
+    '..l000000000000l',
+    '..llllllllllllll',
+    '...l0l......l0l',
+    '...lll......lll'],
+  trapin: [
+    '',
+    '....hh....hh',
+    '...hihh..hhih',
+    '..hiiihhhhiiih',
+    '.hiiiiiiiiiiiih',
+    '.hii0iiiiii0iih',
+    '.hiiiiiiiiiiiih',
+    'hiiiiiiiiiiiiiih',
+    'hiii00000000iiih',
+    'hiiiiiiiiiiiiiih',
+    '.hiiiiiiiiiiiih',
+    '.dhiiiiiiiiiihd',
+    '..dhhiiiiiihhd',
+    '...ddhhhhhhdd',
+    '....d.d..d.d'],
+  gomon: [
+    '',
+    '.....11111111',
+    '...111111111111',
+    '..112222222222211',
+    '..12211111111221',
+    '.1221133331122221',
+    '.121133333331121',
+    '.121330000333121',
+    '.121330000333121',
+    '.121133333331121',
+    '.1221133331122221',
+    '..12211111111221',
+    '..112222222222211',
+    '...111111111111',
+    '.....11111111'],
+  materazzo: [
+    '',
+    '.........33',
+    '........33',
+    '.......33',
+    '......33',
+    '....6666666',
+    '...667777766',
+    '..66777777766',
+    '.6677777777766',
+    '.6770777770776',
+    '.6677777777766',
+    '.6677700077766',
+    '.6677777777766',
+    '..667777777766',
+    '...6667777666',
+    '.....6666666',
+    '......66666'],
+  ferneton: [
+    '',
+    '........99',
+    '........99',
+    '.......0990',
+    '.......0990',
+    '......099990',
+    '.....09999990',
+    '....0999999990',
+    '....0999999990',
+    '....09iiiiii90',
+    '....09i0ii0i90',
+    '....09iiiiii90',
+    '....09i0000i90',
+    '....09iiiiii90',
+    '....0999999990',
+    '....0999999990',
+    '....0999999990',
+    '.....00000000'],
+  bondimon: [
+    '',
+    '..3333333333333333',
+    '..3iiiiiiiiiiiiii3',
+    '..3i222222222222i3',
+    '..3eeeeeeeeeeeeee3',
+    '..3e0eeeeeeee0eee3',
+    '..3eeeeeeeeeeeeee3',
+    '..3333333333333333',
+    '..3gggggggggggggg3',
+    '..33333333333333333',
+    '..3ii3333333333ii3',
+    '..3ii300000003ii3',
+    '..3333333333333333',
+    '...3111333331113',
+    '...1001333310013',
+    '...1001333310013',
+    '....11.......11']
+};
+
+===== ARCHIVO: src/30_data.js =====
+// ============================================================
+//  TIPOS, ATAQUES, BICHOS Y CHUCHERIAS
+// ============================================================
+const TIPOS = ['GRASA', 'YUYO', 'PODRIDO', 'FIERRO', 'CHAMUYO', 'CORRIENTE', 'VOLADOR'];
+const SUPER = {
+  GRASA: ['YUYO', 'CHAMUYO'],
+  YUYO: ['PODRIDO', 'FIERRO'],
+  PODRIDO: ['GRASA', 'CORRIENTE'],
+  FIERRO: ['VOLADOR', 'YUYO'],
+  CHAMUYO: ['FIERRO', 'PODRIDO'],
+  CORRIENTE: ['VOLADOR', 'GRASA'],
+  VOLADOR: ['YUYO', 'CHAMUYO']
+};
+function efect(tAtk, tipos) {
+  let m = 1;
+  for (const d of tipos) {
+    if (SUPER[tAtk] && SUPER[tAtk].includes(d)) m *= 2;
+    else if (SUPER[d] && SUPER[d].includes(tAtk)) m *= 0.5;
+  }
+  return m;
+}
+
+// ataques:  n nombre, t tipo, p potencia, pp, e efecto
+const ATAQUES = {
+  cabezazo:  { n: 'Cabezazo', t: 'FIERRO', p: 45, pp: 30 },
+  piedrazo:  { n: 'Piedrazo', t: 'FIERRO', p: 55, pp: 20 },
+  fierrazo:  { n: 'Fierrazo', t: 'FIERRO', p: 75, pp: 10 },
+  mordiscon: { n: 'Mordiscón', t: 'FIERRO', p: 48, pp: 25 },
+  empujon:   { n: 'Empujón', t: 'FIERRO', p: 30, pp: 30, e: 'primero' },
+  escupitajo:{ n: 'Escupitajo', t: 'PODRIDO', p: 40, pp: 30 },
+  chapoteo:  { n: 'Chapoteo', t: 'PODRIDO', p: 50, pp: 25 },
+  tufo:      { n: 'Tufo', t: 'PODRIDO', p: 35, pp: 20, e: 'tufo' },
+  aguanegra: { n: 'Agua Negra', t: 'PODRIDO', p: 70, pp: 10 },
+  grasada:   { n: 'Grasada', t: 'GRASA', p: 45, pp: 30 },
+  panzazo:   { n: 'Panzazo', t: 'GRASA', p: 58, pp: 20 },
+  aceitazo:  { n: 'Aceitazo', t: 'GRASA', p: 40, pp: 20, e: 'bajaDef' },
+  aranazo:   { n: 'Arañazo', t: 'GRASA', p: 35, pp: 35 },
+  fritanga:  { n: 'Fritanga', t: 'GRASA', p: 72, pp: 10 },
+  yuyazo:    { n: 'Yuyazo', t: 'YUYO', p: 45, pp: 30 },
+  latigazo:  { n: 'Latigazo', t: 'YUYO', p: 58, pp: 20 },
+  semillita: { n: 'Semillita', t: 'YUYO', p: 30, pp: 20, e: 'chupa' },
+  matecocido:{ n: 'Mate Cocido', t: 'YUYO', p: 0, pp: 10, e: 'cura' },
+  chamuyo:   { n: 'Chamuyo', t: 'CHAMUYO', p: 0, pp: 25, e: 'bajaAtk' },
+  verso:     { n: 'Verso', t: 'CHAMUYO', p: 42, pp: 30 },
+  bardeada:  { n: 'Bardeada', t: 'CHAMUYO', p: 58, pp: 20 },
+  silbatina: { n: 'Silbatina', t: 'CHAMUYO', p: 35, pp: 25, e: 'bajaDef' },
+  cargada:   { n: 'Cargada', t: 'CHAMUYO', p: 75, pp: 8 },
+  aletazo:   { n: 'Aletazo', t: 'VOLADOR', p: 40, pp: 35 },
+  picotazo:  { n: 'Picotazo', t: 'VOLADOR', p: 52, pp: 25 },
+  rasante:   { n: 'Vuelo Rasante', t: 'VOLADOR', p: 70, pp: 10 },
+  chispazo:  { n: 'Chispazo', t: 'CORRIENTE', p: 45, pp: 30 },
+  cablazo:   { n: 'Cablazo', t: 'CORRIENTE', p: 62, pp: 15 },
+  bocinazo:  { n: 'Bocinazo', t: 'CORRIENTE', p: 35, pp: 20, e: 'aturde' },
+  descanso:  { n: 'Siestita', t: 'GRASA', p: 0, pp: 10, e: 'cura' },
+  forcejeo:  { n: 'Manotazo', t: 'GRASA', p: 32, pp: 99 },
+  gritito:   { n: 'Gritito', t: 'CHAMUYO', p: 0, pp: 30, e: 'bajaAtk' }
+};
+
+// bichos
+const BICHOS = {
+  yuyin:     { n: 'Yuyín', t: ['YUYO'], b: [45, 45, 45, 40], x: 62, cap: 190, evo: ['yuyaco', 14],
+    ap: [[1, 'yuyazo'], [1, 'gritito'], [7, 'semillita'], [12, 'latigazo'], [18, 'matecocido'], [24, 'cargada']],
+    d: 'Crece en las grietas de la vereda. No lo matan ni con lavandina.' },
+  yuyaco:    { n: 'Yuyaco', t: ['YUYO'], b: [68, 68, 66, 55], x: 142, cap: 75,
+    ap: [[1, 'yuyazo'], [1, 'latigazo'], [16, 'semillita'], [22, 'matecocido'], [28, 'cargada'], [34, 'fierrazo']],
+    d: 'Le brotó una flor del baldío. Florece cuando gana el Rojo.' },
+  chorimon:  { n: 'Chorimón', t: ['GRASA'], b: [48, 54, 42, 42], x: 64, cap: 190, evo: ['chorizon', 14],
+    ap: [[1, 'grasada'], [1, 'aranazo'], [8, 'aceitazo'], [13, 'panzazo'], [19, 'empujon'], [25, 'fritanga']],
+    d: 'Nació en la parrilla de la esquina. Siempre a punto, nunca crudo.' },
+  chorizon:  { n: 'Chorizón', t: ['GRASA', 'FIERRO'], b: [70, 74, 58, 50], x: 145, cap: 75,
+    ap: [[1, 'grasada'], [1, 'panzazo'], [16, 'aceitazo'], [21, 'cabezazo'], [27, 'fritanga'], [33, 'fierrazo']],
+    d: 'Doble de chori, doble de pan. Te mira y te sube el colesterol.' },
+  riachin:   { n: 'Riachín', t: ['PODRIDO'], b: [44, 46, 48, 48], x: 63, cap: 190, evo: ['riachonzo', 14],
+    ap: [[1, 'escupitajo'], [1, 'gritito'], [8, 'tufo'], [13, 'chapoteo'], [19, 'silbatina'], [26, 'aguanegra']],
+    d: 'Gotita del Riachuelo. Brilla de noche y nadie sabe por qué.' },
+  riachonzo: { n: 'Riachonzo', t: ['PODRIDO'], b: [66, 64, 68, 58], x: 144, cap: 75,
+    ap: [[1, 'escupitajo'], [1, 'chapoteo'], [16, 'tufo'], [22, 'silbatina'], [28, 'aguanegra'], [34, 'cargada']],
+    d: 'Charco con brazos. Prometieron limpiarlo en mil días. Acá sigue.' },
+  palomin:   { n: 'Palomín', t: ['VOLADOR'], b: [40, 46, 36, 62], x: 55, cap: 200,
+    ap: [[1, 'aletazo'], [1, 'gritito'], [9, 'picotazo'], [15, 'silbatina'], [22, 'rasante'], [28, 'cargada']],
+    d: 'Vive de las migas de la plaza. Le tiene menos miedo a la gente que la gente a él.' },
+  perrucho:  { n: 'Perrucho', t: ['GRASA'], b: [52, 54, 40, 52], x: 60, cap: 170,
+    ap: [[1, 'aranazo'], [1, 'mordiscon'], [10, 'grasada'], [16, 'empujon'], [23, 'panzazo'], [30, 'fritanga']],
+    d: 'Perro de la cuadra. Tiene dueño según a quién le preguntes.' },
+  cucaracho: { n: 'Cucaracho', t: ['PODRIDO', 'FIERRO'], b: [42, 42, 60, 46], x: 58, cap: 180,
+    ap: [[1, 'escupitajo'], [1, 'cabezazo'], [10, 'tufo'], [17, 'piedrazo'], [24, 'aguanegra'], [31, 'fierrazo']],
+    d: 'Sobrevivió a la híper y a dos mudanzas. Te va a sobrevivir a vos también.' },
+  cumbion:   { n: 'Cumbión', t: ['CHAMUYO', 'CORRIENTE'], b: [48, 58, 42, 54], x: 70, cap: 140,
+    ap: [[1, 'chispazo'], [1, 'gritito'], [11, 'verso'], [17, 'bocinazo'], [24, 'cablazo'], [31, 'cargada']],
+    d: 'Parlante que quedó prendido en el 93 y nadie se animó a apagar.' },
+  trapin:    { n: 'Trapín', t: ['CHAMUYO'], b: [46, 44, 48, 46], x: 56, cap: 190,
+    ap: [[1, 'chamuyo'], [1, 'aranazo'], [9, 'verso'], [15, 'silbatina'], [22, 'bardeada'], [29, 'cargada']],
+    d: 'Te cuida el auto aunque no se lo pidas. Aparece de la nada.' },
+  gomon:     { n: 'Gomón', t: ['FIERRO'], b: [58, 52, 68, 26], x: 68, cap: 150,
+    ap: [[1, 'cabezazo'], [1, 'empujon'], [11, 'piedrazo'], [18, 'aceitazo'], [25, 'fierrazo'], [32, 'panzazo']],
+    d: 'Cubierta que rueda sola. Si la ves prendida fuego, algo va a pasar.' },
+  materazzo: { n: 'Materazzo', t: ['YUYO'], b: [60, 46, 54, 34], x: 66, cap: 150,
+    ap: [[1, 'yuyazo'], [1, 'matecocido'], [12, 'semillita'], [18, 'latigazo'], [25, 'descanso'], [32, 'cargada']],
+    d: 'Mate de abuela. Cura todo menos la tristeza del descenso.' },
+  ferneton:  { n: 'Fernetón', t: ['CHAMUYO', 'PODRIDO'], b: [52, 60, 46, 50], x: 74, cap: 120,
+    ap: [[1, 'verso'], [1, 'escupitajo'], [12, 'bardeada'], [19, 'tufo'], [26, 'cargada'], [33, 'aguanegra']],
+    d: 'Aparece solo en las esquinas después de las once de la noche.' },
+  bondimon:  { n: 'Bondimón', t: ['FIERRO', 'CORRIENTE'], b: [72, 70, 70, 42], x: 180, cap: 30,
+    ap: [[1, 'cabezazo'], [1, 'bocinazo'], [1, 'cablazo'], [1, 'fierrazo'], [30, 'panzazo']],
+    d: 'El 22 hecho bicho. Pasa cada 40 minutos y siempre lleno.' }
+};
+
+// chucherias
+const OBJETOS = {
+  chapita:   { n: 'Chapita', d: 'Tapita de gaseosa. Sirve para atrapar bichos.', precio: 20, tipo: 'bola', rate: 1 },
+  chapitona: { n: 'Chapitona', d: 'Tapita de cerveza, mas grandota. Atrapa mejor.', precio: 60, tipo: 'bola', rate: 1.8 },
+  tuper:     { n: 'Tuper', d: 'El tuper de la vieja. Nunca falla... casi.', precio: 180, tipo: 'bola', rate: 3.2 },
+  sanguche:  { n: 'Sanguche', d: 'De miga, medio duro. Cura 30 de vida.', precio: 30, tipo: 'cura', cura: 30 },
+  milanga:   { n: 'Milanga', d: 'Con papas. Cura 70 de vida.', precio: 80, tipo: 'cura', cura: 70 },
+  fernet:    { n: 'Fernet', d: 'Con coca. Cura todo y despabila.', precio: 200, tipo: 'cura', cura: 999, limpia: 1 },
+  soda:      { n: 'Soda', d: 'Del sodero. Saca el tufo de encima.', precio: 25, tipo: 'estado', limpia: 1 },
+  bizcochito:{ n: 'Bizcochito', d: 'Levanta a un bicho debilitado con media vida.', precio: 150, tipo: 'revive' }
+};
+
+// ------- calculos -------
+function statHP(base, lvl) { return Math.floor(base * lvl / 50) + lvl + 10; }
+function statOtro(base, lvl) { return Math.floor(base * lvl / 50) + 5; }
+function expParaNivel(l) { return l * l * l; }
+
+function crearBicho(id, lvl) {
+  const e = BICHOS[id];
+  const b = {
+    id, mote: e.n, lvl,
+    hpMax: statHP(e.b[0], lvl), hp: statHP(e.b[0], lvl),
+    exp: expParaNivel(lvl), estado: '', ataques: []
+  };
+  const pool = e.ap.filter(a => a[0] <= lvl).map(a => a[1]);
+  const uniq = [...new Set(pool)];
+  for (const m of uniq.slice(-4)) b.ataques.push({ id: m, pp: ATAQUES[m].pp, ppMax: ATAQUES[m].pp });
+  if (!b.ataques.length) b.ataques.push({ id: 'cabezazo', pp: 30, ppMax: 30 });
+  return b;
+}
+function statsDe(b) {
+  const e = BICHOS[b.id];
+  return { atk: statOtro(e.b[1], b.lvl), def: statOtro(e.b[2], b.lvl), vel: statOtro(e.b[3], b.lvl) };
+}
+
+===== ARCHIVO: src/40_maps.js =====
+// ============================================================
+//  EL BARRIO: mapas, vecinos y verso
+// ============================================================
+const LOOKS = {
+  pibe:    { pelo: PAL['f'], extraCol: PAL['g'], gorra: 1, remera: PAL['s'], pant: PAL['c'], zapas: PAL['1'] },
+  vieja:   { pelo: PAL['6'], pelolargo: 1, remera: PAL['m'], pant: PAL['l'] },
+  profe:   { pelo: PAL['4'], remera: PAL['s'], pant: PAL['2'] },
+  kiosco:  { pelo: PAL['1'], remera: PAL['d'], pant: PAL['2'] },
+  bocha:   { pelo: PAL['c'], extraCol: PAL['1'], gorra: 1, remera: PAL['i'], pant: PAL['2'] },
+  rosa:    { pelo: PAL['4'], pelolargo: 1, remera: PAL['l'], pant: PAL['2'] },
+  nacho:   { pelo: PAL['1'], remera: PAL['g'], pant: PAL['1'] },
+  trapito: { pelo: PAL['6'], extraCol: PAL['h'], gorra: 1, remera: PAL['h'], pant: PAL['2'] },
+  bondi:   { pelo: PAL['2'], extraCol: PAL['1'], gorra: 1, remera: PAL['e'], pant: PAL['1'] },
+  pibe1:   { pelo: PAL['1'], remera: PAL['a'], pant: PAL['c'] },
+  pibe2:   { pelo: PAL['7'], extraCol: PAL['a'], gorra: 1, remera: PAL['d'], pant: PAL['1'] },
+  nena:    { pelo: PAL['6'], pelolargo: 1, remera: PAL['e'], pant: PAL['m'] },
+  senora:  { pelo: PAL['3'], pelolargo: 1, remera: PAL['b'], pant: PAL['2'] },
+  viejo:   { pelo: PAL['4'], remera: PAL['q'], pant: PAL['6'] },
+  cartone: { pelo: PAL['6'], remera: PAL['o'], pant: PAL['n'] },
+  pesca:   { pelo: PAL['3'], extraCol: PAL['9'], gorra: 1, remera: PAL['9'], pant: PAL['6'] },
+  insp:    { pelo: PAL['1'], remera: PAL['3'], pant: PAL['1'] },
+  abuela:  { pelo: PAL['4'], pelolargo: 1, remera: PAL['3'], pant: PAL['1'] }
+};
+
+const MAPAS = {
+  casa: {
+    nom: 'Tu pieza', mus: 'barrio', int: 1,
+    t: ['XXXXXXXXXX', 'XbXXtXXXXX', 'XFFFFFFFFX', 'XFFFFFFFFX', 'XFFFFFFFFX',
+        'XFFFFFFFFX', 'XFFFFFFFFX', 'XFFFFEFFFX', 'XXXXXXXXXX'],
+    warps: [{ x: 5, y: 7, a: 'barrio', ax: 2, ay: 4, ad: 'd' }],
+    npcs: [
+      { x: 7, y: 4, d: 'd', c: 'vieja', nom: 'Mamá', id: 'mama' },
+      { x: 4, y: 2, d: 'd', c: 'abuela', nom: 'Abuela', id: 'abuela' }
+    ],
+    obj: [{ x: 4, y: 1, txt: 'Es la tele. Están pasando "Ritmo de la Noche".\nUn tipo tira un tostado a la pileta.' },
+          { x: 1, y: 1, txt: 'Tu cama. Tiene la sábana de Independiente\nque te regaló la abuela.' }]
+  },
+
+  barrio: {
+    nom: 'Calle Mitre', mus: 'barrio',
+    t: ['#######..,!,,..#####',
+        '#WW#WW#..,!,,..#WW##',
+        '#######..,!,,..#####',
+        '##D####..,!,,..##D##',
+        '.........,!,,.......',
+        '..T......,!,,....L..',
+        '.........,!,,.......',
+        '.C.....L.,!,,......S',
+        ',,,,,,,,,,,,,,,,,,,,',
+        '--------------------',
+        ',,,,,,,,,,,,,,,,,,,,',
+        '.........,!,,.......',
+        '..L......,!,,..T....',
+        '.........,!,,.......',
+        '###D###..,!,,..##D##',
+        '#######..,!,,..#####',
+        '#WW#WW#..,!,,..#WW##',
+        '#######..nnnn..#####'],
+    warps: [
+      { x: 2, y: 3, a: 'casa', ax: 5, ay: 6, ad: 'u', puerta: 1 },
+      { x: 17, y: 3, a: 'taller', ax: 5, ay: 6, ad: 'u', puerta: 1 },
+      { x: 3, y: 14, a: 'kiosco', ax: 5, ay: 6, ad: 'u', puerta: 1 },
+      { x: 17, y: 14, a: 'depto', ax: 5, ay: 6, ad: 'u', puerta: 1 },
+      { borde: 'n', xs: [9, 12], a: 'plaza', ax: 9, ay: 16, ad: 'u' },
+      { borde: 'e', ys: [8, 10], a: 'baldio', ax: 1, ay: 7, ad: 'r' }
+    ],
+    npcs: [
+      { x: 6, y: 5, d: 'd', c: 'senora', id: 'vecina1' },
+      { x: 14, y: 12, d: 'l', c: 'viejo', id: 'viejo1' },
+      { x: 4, y: 11, d: 'd', c: 'pibe1', id: 'pibecalle' },
+      { x: 10, y: 16, d: 'u', c: 'insp', id: 'obrero' }
+    ],
+    obj: [{ x: 19, y: 7, txt: 'CALLE MITRE al 300.\nAvellaneda, Provincia de Buenos Aires.' }]
+  },
+
+  kiosco: {
+    nom: 'Kiosco de Ramón', mus: 'barrio', int: 1,
+    t: ['XXXXXXXXXX', 'XHHHHHHHHX', 'XFFFFFFFFX', 'XMMMMFFFFX', 'XFFFFFFFFX',
+        'XFFFFFFFFX', 'XFFFFFFFFX', 'XFFFFEFFFX', 'XXXXXXXXXX'],
+    warps: [{ x: 5, y: 7, a: 'barrio', ax: 3, ay: 15, ad: 'd' }],
+    npcs: [
+      { x: 2, y: 2, d: 'd', c: 'kiosco', nom: 'Ramón', id: 'ramon' },
+      { x: 7, y: 5, d: 'l', c: 'nena', id: 'clienta' }
+    ]
+  },
+
+  taller: {
+    nom: 'Taller de Chirola', mus: 'barrio', int: 1,
+    t: ['XXXXXXXXXX', 'XMMMXXHHXX', 'XFFFFFFFFX', 'XFFFFFFFFX', 'XFFFFFFFFX',
+        'XFFFFFFFFX', 'XFFFFFFFFX', 'XFFFFEFFFX', 'XXXXXXXXXX'],
+    warps: [{ x: 5, y: 7, a: 'barrio', ax: 17, ay: 4, ad: 'd' }],
+    npcs: [{ x: 4, y: 2, d: 'd', c: 'profe', nom: 'Chirola', id: 'chirola' }],
+    obj: [{ x: 7, y: 1, txt: 'Una heladera llena de bichos en tuppers.\nMejor no abrir.' }]
+  },
+
+  depto: {
+    nom: 'Depto del 2do B', mus: 'barrio', int: 1,
+    t: ['XXXXXXXXXX', 'XbXXXXttXX', 'XFFFFFFFFX', 'XFFFFFFFFX', 'XFFFFFFFFX',
+        'XFFFFFFFFX', 'XFFFFFFFFX', 'XFFFFEFFFX', 'XXXXXXXXXX'],
+    warps: [{ x: 5, y: 7, a: 'barrio', ax: 17, ay: 15, ad: 'd' }],
+    npcs: [{ x: 3, y: 3, d: 'd', c: 'pibe2', id: 'nerd' },
+           { x: 7, y: 5, d: 'l', c: 'senora', id: 'tia' }]
+  },
+
+  plaza: {
+    nom: 'Plaza Alsina', mus: 'barrio',
+    t: ['RRRRRRRR....RRRRRRRR',
+        'R""Y""""....""""Y""R',
+        'R"**""""....""""**"R',
+        'R"**""""....""""**"R',
+        'R"""""""...."""""""R',
+        'R"~~~~""....""B""""R',
+        'R"~~~~""...."""B"""R',
+        'R"""""""...."""""""R',
+        'R..................R',
+        'R..................R',
+        'R"""""""...."""""""R',
+        'R"*B""""....""""B*"R',
+        'R"**""""....""""**"R',
+        'R"""Y"""...."""Y"""R',
+        'R"**""""....""""**"R',
+        'R"**""""....""""**"R',
+        'R"""""""...."""""""R',
+        'RRRRRRRR....RRRRRRRR'],
+    warps: [
+      { borde: 's', xs: [8, 11], a: 'barrio', ax: 10, ay: 1, ad: 'd' },
+      { borde: 'n', xs: [8, 11], a: 'cancha', ax: 9, ay: 10, ad: 'u' }
+    ],
+    enc: { tiles: '*', rate: 0.11, lista: [['palomin', 3, 6, 30], ['yuyin', 3, 5, 25], ['trapin', 4, 6, 25], ['cucaracho', 3, 5, 20]] },
+    npcs: [
+      { x: 13, y: 5, d: 'l', c: 'rosa', nom: 'Doña Rosa', id: 'rosa' },
+      { x: 5, y: 9, d: 'u', c: 'pibe1', id: 'kevin' },
+      { x: 15, y: 12, d: 'd', c: 'nena', id: 'jazmin' },
+      { x: 3, y: 8, d: 'd', c: 'viejo', id: 'jubilado' },
+      { x: 9, y: 3, d: 'd', c: 'senora', id: 'gate_cancha' }
+    ],
+    obj: [{ x: 16, y: 8, txt: 'PLAZA ALSINA. Prohibido pisar el césped.\n(Alguien tachó "Prohibido").' }]
+  },
+
+  cancha: {
+    nom: 'Afuera de la cancha', mus: 'barrio',
+    t: ['VVVVVVVVVVVVVVVVVVVV',
+        'VVVVVVVVVVVVVVVVVVVV',
+        '||||||||||||||||||||',
+        'AAAAAAAAAAAAAAAAAAAA',
+        'AnnAAAAAAnAAAAAAnnAA',
+        'AAAAAAAAAAAAAAAAAAAA',
+        'nAAAAAAAAAAAAAAAAAAn',
+        'AAAAAAAAAnAAAAAAAAAA',
+        'AAAAAAAAAAAAAAAAAAAA',
+        'AAnnAAAAAAAAAAAnnAAA',
+        'AAAAAAAAAAnAAAAAAAAA',
+        'RRRRRRRR....RRRRRRRR'],
+    warps: [{ borde: 's', xs: [8, 11], a: 'plaza', ax: 9, ay: 1, ad: 'd' }],
+    npcs: [
+      { x: 9, y: 5, d: 'd', c: 'nacho', nom: 'Nacho', id: 'nacho' },
+      { x: 4, y: 7, d: 'r', c: 'pibe2', id: 'brian' },
+      { x: 15, y: 6, d: 'l', c: 'pibe1', id: 'maxi' },
+      { x: 16, y: 10, d: 'd', c: 'viejo', id: 'hincha' }
+    ],
+    obj: [{ x: 2, y: 3, txt: 'Un mural gigante: "EL ROJO ES EL PUEBLO".\nAbajo alguien escribió "y la 22 tambien".' }]
+  },
+
+  baldio: {
+    nom: 'El baldío', mus: 'barrio',
+    t: ['||||||||||||||||||||',
+        'gg**gggg**gggg**gggg',
+        'g**gg**gg**gg**gg**g',
+        'gggnnngggggnnngggggg',
+        '**gg**gg**gg**gg**gg',
+        'gg**gggg**gggg**gggg',
+        'ggggnnnggggggnnngggg',
+        'gggggggggggggggggggg',
+        'gggggggggggggggggggg',
+        '**gg**gg**gg**gg**gg',
+        'gg**gggg**gggg**gggg',
+        'ggggnnnggggggnnngggg',
+        '**gg**gg**gg**gg**gg',
+        'gg**gggg**gggg**gggg',
+        'gggggggggggggggggggg',
+        '|||||||||....|||||||'],
+    warps: [
+      { borde: 'o', ys: [7, 8], a: 'barrio', ax: 18, ay: 9, ad: 'l' },
+      { borde: 's', xs: [9, 12], a: 'riachuelo', ax: 10, ay: 1, ad: 'd' }
+    ],
+    enc: { tiles: '*', rate: 0.12, lista: [['yuyin', 5, 9, 22], ['perrucho', 6, 9, 22], ['cucaracho', 5, 8, 20], ['gomon', 7, 9, 18], ['materazzo', 6, 8, 18]] },
+    npcs: [
+      { x: 8, y: 8, d: 'd', c: 'bocha', nom: 'Bocha', id: 'bocha1' },
+      { x: 3, y: 12, d: 'r', c: 'cartone', id: 'ruli' },
+      { x: 16, y: 4, d: 'l', c: 'pibe1', id: 'walter' },
+      { x: 13, y: 13, d: 'd', c: 'pibe2', id: 'nahuel' }
+    ]
+  },
+
+  riachuelo: {
+    nom: 'Orilla del Riachuelo', mus: 'barrio',
+    t: ['|||||||||....|||||||',
+        'gggggggggggggggggggg',
+        'gg**gggggggggg**gggg',
+        'ggggggnnnggggggggggg',
+        'gggggggggggggggggggg',
+        'gg**gggggggggg**gggg',
+        'QQQQQggggnnngggggggg',
+        'PPPPPggggggggggggggg',
+        'PPPPPggggggggggggggg',
+        'QQQQQ~~~~~~~~~~~~~~~',
+        '~~~~~~~~~~~~~~~~~~~~',
+        '~~~~~~~~~~~~~~~~~~~~',
+        '~~~~~~~~~~~~~~~~~~~~',
+        '~~~~~~~~~~~~~~~~~~~~'],
+    warps: [
+      { borde: 'n', xs: [9, 12], a: 'baldio', ax: 10, ay: 14, ad: 'u' },
+      { borde: 'o', ys: [7, 8], a: 'terminal', ax: 18, ay: 7, ad: 'l' }
+    ],
+    enc: { tiles: '*', rate: 0.12, lista: [['riachin', 8, 12, 26], ['cucaracho', 8, 11, 20], ['ferneton', 10, 12, 14], ['palomin', 9, 11, 20], ['gomon', 9, 12, 20]] },
+    npcs: [
+      { x: 6, y: 7, d: 'l', c: 'trapito', nom: 'Trapito', id: 'trapito' },
+      { x: 14, y: 4, d: 'd', c: 'pesca', id: 'cacho' },
+      { x: 3, y: 2, d: 'd', c: 'pibe2', id: 'uriel' },
+      { x: 17, y: 8, d: 'l', c: 'cartone', id: 'don' }
+    ],
+    obj: [{ x: 8, y: 6, txt: 'CARTEL: "PROHIBIDO BAÑARSE".\nAbajo: "igual no te ibas a bañar, no?"' }]
+  },
+
+  terminal: {
+    nom: 'Terminal del 22', mus: 'barrio',
+    t: ['####################',
+        '#WW##WW##DD##WW##WW#',
+        '####################',
+        '....................',
+        '.,,,,,,,,,,,,,,,,,,.',
+        '.,,,,,,,,,,,,,,,,,,.',
+        '.,,,,,,,,,,,,,,,,,,.',
+        '....................',
+        '.L....S.......L....S',
+        '....................',
+        'RRRRRRRRRRRRRRRRRRRR',
+        'RRRRRRRRRRRRRRRRRRRR'],
+    warps: [{ borde: 'e', ys: [7, 8], a: 'riachuelo', ax: 1, ay: 7, ad: 'r' }],
+    npcs: [
+      { x: 9, y: 5, d: 'd', c: 'bondi', nom: 'El Colectivero', id: 'colectivero' },
+      { x: 4, y: 7, d: 'r', c: 'insp', id: 'inspector' },
+      { x: 15, y: 4, d: 'd', c: 'bondi', id: 'suplente' },
+      { x: 12, y: 9, d: 'd', c: 'senora', id: 'pasajera' }
+    ],
+    obj: [{ x: 6, y: 8, txt: 'CARTEL: LINEA 22 - AVELLANEDA / ONCE.\nFRECUENCIA: "CUANDO SALGA".' }]
+  }
+};
+
+// ------------------------------------------------------------
+//  DIALOGOS Y GENTE
+// ------------------------------------------------------------
+const GENTE = {
+  mama: {
+    nom: 'Mamá',
+    dial: () => G.flags.starter
+      ? ['¡Mirá vos, ya tenés un bicho!\nOjo con el Riachuelo eh, no te me acerques.',
+         'Ah, y si te lastimás pasá por lo de Ramón\nque te lo cura gratis. Es un amor ese hombre.']
+      : ['¡' + G.nombre + '! ¡Levantate que son las tres\nde la tarde!',
+         'Andá a lo de Chirola, el de la ferretería,\nque te anda buscando hace rato.',
+         'Y llevá campera que a la noche refresca.']
+  },
+  abuela: {
+    nom: 'Abuela',
+    dial: () => {
+      if (G.flags.mate) return ['Cuidámelo al Materazzo, ¿eh?\nEse mate lo cebó tu abuelo en el 78.'];
+      if (!G.flags.starter) return ['Nene, cuando tengas un bicho vení\nque te doy algo.'];
+      G.flags.mate = 1; darBicho(crearBicho('materazzo', 8));
+      return ['Vení, vení. Tomá, llevate el mate viejo.',
+              'Se despertó solo el otro día y me pidió\nyerba. Casi me muero.',
+              '*Te dio un Materazzo!*'];
+    }
+  },
+  chirola: { nom: 'Chirola', esp: 'chirola' },
+  ramon: { nom: 'Ramón', esp: 'kiosco' },
+  clienta: { nom: 'Clienta', dial: () => ['Ramón me fía desde el 91.\nUn santo el tipo. Un santo endeudado.'] },
+  vecina1: { nom: 'Vecina', dial: () => ['¿Vos sos el hijo de la Marta, no?\n¡Cómo creciste, papito!', 'Decile que le dejé el tupper en la puerta.'] },
+  viejo1: { nom: 'Don Osvaldo', dial: () => ['En mi época no había bichos de estos.\nHabía laburo, que es distinto.'] },
+  pibecalle: { nom: 'Pibe', dial: () => ['¿Viste que el Riachuelo brilla de noche?\nMi viejo dice que es por la fábrica.', 'Yo digo que son los bichos.'] },
+  obrero: {
+    nom: 'Obrero', dial: () => ['La calle está cortada por obra.',
+      'Empezaron en el 87. Van bien, dicen.']
+  },
+  nerd: {
+    nom: 'Pibe del 2do B',
+    dial: () => ['Yo tengo el manual de los bichos.',
+      'Cada bicho tiene tipo. GRASA le gana a YUYO\ny a CHAMUYO. PODRIDO le gana a GRASA.',
+      'YUYO le gana a PODRIDO y a FIERRO.\nFIERRO le gana a VOLADOR y a YUYO.',
+      'CHAMUYO le gana a FIERRO y PODRIDO.\nCORRIENTE a VOLADOR y GRASA.',
+      'Y VOLADOR le gana a YUYO y a CHAMUYO.\nDale, tomá nota que después te olvidás.']
+  },
+  tia: {
+    nom: 'Tía Nélida',
+    dial: () => {
+      if (G.flags.tia) return ['Comé algo, estás flaquito.'];
+      G.flags.tia = 1; darObjeto('milanga', 2); darObjeto('soda', 3);
+      return ['¡Pero mirá qué flaco estás!',
+        'Tomá, llevate unas milangas y unas sodas.',
+        '*Recibiste 2 Milangas y 3 Sodas!*'];
+    }
+  },
+  jubilado: { nom: 'Jubilado', dial: () => ['Cobré la jubilación y me alcanzó\npara el café y para el bondi.', 'Uno de los dos, digo.'] },
+  gate_cancha: {
+    nom: 'Señora',
+    dial: () => G.medallas.length >= 1
+      ? ['Pasá, pasá. Total hoy no juega nadie.']
+      : ['No, para la cancha no vas a ir.',
+         'Primero andá a saludar a Doña Rosa,\nque está sentada ahí en el banco.',
+         'Y no vuelvas hasta que te dé la medalla,\nque me conozco a los pibes.']
+  },
+  hincha: { nom: 'Hincha', dial: () => ['Yo vi al Bocha Maradona en el 81.\nDe visitante, pero lo vi.'] },
+  cacho: { nom: 'Cacho', esp: 'entrenador' },
+  don: { nom: 'Don Cirilo', dial: () => ['Con lo que saco del cartón le doy\nde comer a los bichos.', 'Ellos comen cualquier cosa. Yo también.'] },
+  inspector: { nom: 'Inspector', esp: 'entrenador' },
+  pasajera: { nom: 'Pasajera', dial: () => ['Hace 40 minutos que espero el 22.',
+    'Ah, no. 40 minutos hace que espero\nque el 22 aparezca. Esperar hace más.'] },
+  suplente: { nom: 'Chofer suplente', esp: 'entrenador' },
+  // entrenadores
+  kevin: { nom: 'Kevin', esp: 'entrenador' },
+  jazmin: { nom: 'Jazmín', esp: 'entrenador' },
+  brian: { nom: 'Brian', esp: 'entrenador' },
+  maxi: { nom: 'Maxi', esp: 'entrenador' },
+  ruli: { nom: 'Ruli', esp: 'entrenador' },
+  walter: { nom: 'Walter', esp: 'entrenador' },
+  nahuel: { nom: 'Nahuel', esp: 'entrenador' },
+  uriel: { nom: 'Uriel', esp: 'entrenador' },
+  bocha1: { nom: 'Bocha', esp: 'entrenador' },
+  rosa: { nom: 'Doña Rosa', esp: 'entrenador' },
+  nacho: { nom: 'Nacho', esp: 'entrenador' },
+  trapito: { nom: 'Trapito', esp: 'entrenador' },
+  colectivero: { nom: 'El Colectivero', esp: 'entrenador' }
+};
+
+// entrenadores: equipo, guita, verso antes / despues
+const DUELOS = {
+  kevin: { nom: 'PIBE KEVIN', look: 'pibe1', plata: 120,
+    eq: [['palomin', 5], ['yuyin', 5]],
+    pre: ['¡Eh, vos! ¿Tenés bichos?', 'Yo los cacé todos acá en la plaza.\n¡Vamo\' a ver quién es más guapo!'],
+    win: ['Uh, me ganaste. Bueno, igual\nyo estaba jugando de prueba.'],
+    post: ['Cuando quieras la revancha avisá.\nYo estoy siempre acá, no laburo.'] },
+  jazmin: { nom: 'NENA JAZMIN', look: 'nena', plata: 140,
+    eq: [['trapin', 6], ['cucaracho', 6]],
+    pre: ['Mi hermano dice que sos malísimo.', '¿Es verdad? Mostrame.'],
+    win: ['Bueno, mi hermano miente mucho.'],
+    post: ['Le voy a decir a mi hermano que\ntenía razón... a medias.'] },
+  brian: { nom: 'PIBE BRIAN', look: 'pibe2', plata: 260,
+    eq: [['perrucho', 12], ['gomon', 12]],
+    pre: ['Acá afuera de la cancha se pelea distinto.', '¿Vos de qué cuadro sos?'],
+    win: ['Uf. Bueno, del Rojo igual sos, no?'],
+    post: ['Ojo con Nacho, ese entrena con\nbombo y todo.'] },
+  maxi: { nom: 'PIBE MAXI', look: 'pibe1', plata: 280,
+    eq: [['cumbion', 13], ['palomin', 12]],
+    pre: ['¡Pará que bajo el volumen!', '...no, mentira, no lo bajo.'],
+    win: ['Igual la cumbia sigue sonando, eh.'],
+    post: ['El parlante lo saqué de un Fiat 147.\nAnda mejor que el Fiat.'] },
+  ruli: { nom: 'CARTONERO RULI', look: 'cartone', plata: 200,
+    eq: [['cucaracho', 9], ['gomon', 10]],
+    pre: ['Yo revuelvo el baldío desde pibe.', 'Los bichos de acá son bravos, avisá.'],
+    win: ['Me ganaste. Llevate esto igual,\nno me sirve.'],
+    post: ['Si encontrás una cubierta con ojos,\nno la patees. Te lo digo por experiencia.'] },
+  walter: { nom: 'PIBE WALTER', look: 'pibe1', plata: 180,
+    eq: [['yuyin', 8], ['perrucho', 9]],
+    pre: ['¡Cuidado dónde pisás que hay pozo!', 'Ah, ya está. Bueno, peleá.'],
+    win: ['Te dije lo del pozo, eh.'],
+    post: ['El pozo ese está desde el 89.\nYa le pusimos nombre.'] },
+  nahuel: { nom: 'PIBE NAHUEL', look: 'pibe2', plata: 190,
+    eq: [['materazzo', 9], ['cucaracho', 10]],
+    pre: ['¿Vos también juntás bichos?', 'Qué manía la de este barrio.'],
+    win: ['Bueno, che. Tampoco para tanto.'],
+    post: ['Mi vieja dice que en vez de bichos\njunte para el alquiler. Tiene razón.'] },
+  uriel: { nom: 'TRAPITO URIEL', look: 'pibe2', plata: 320,
+    eq: [['riachin', 13], ['trapin', 13]],
+    pre: ['Te lo cuido el bicho, jefe.', '...igual me lo voy a quedar.'],
+    win: ['Bueno bueno, era chiste.'],
+    post: ['Al que hay que ganarle es al Trapito\ngrande, el del puente. Ese sí.'] },
+  cacho: { nom: 'PESCADOR CACHO', look: 'pesca', plata: 340,
+    eq: [['riachin', 14], ['gomon', 13], ['cucaracho', 13]],
+    pre: ['Cuarenta años pescando acá.', 'Nunca saqué un pescado.\nSaqué de todo, menos un pescado.'],
+    win: ['Como los pescados. Se me escapó.'],
+    post: ['Ayer saqué una moto. Andando.'] },
+  suplente: { nom: 'CHOFER SUPLENTE', look: 'bondi', plata: 420,
+    eq: [['gomon', 16], ['bondimon', 15]],
+    pre: ['Yo hago el turno noche.', 'El 22 a las cuatro de la mañana\nes otra cosa, pibe.'],
+    win: ['Andá nomás, andá a hablar con el jefe.'],
+    post: ['Cuando seas grande vas a entender\nlo que es manejar con lluvia.'] },
+  inspector: { nom: 'INSPECTOR', look: 'insp', plata: 400,
+    eq: [['trapin', 15], ['cumbion', 16]],
+    pre: ['Boleto por favor.', '¿No tenés? Bueno, entonces peleamos.'],
+    win: ['Pasá, pasá. Pero la próxima sacá boleto.'],
+    post: ['Yo tampoco saco boleto. No le digas\na nadie.'] },
+  bocha1: { nom: 'TU RIVAL BOCHA', look: 'bocha', plata: 300,
+    eq: [['palomin', 9], ['cumbion', 10]],
+    pre: ['¡Ahí está! ¡El nene de mamá!',
+      'Chirola a mí me dio el bicho primero, eh.\nSiempre fui el favorito.',
+      '¡Vamo\' a ver quién agarró el mejor!'],
+    win: ['¡Pero la puta madre!',
+      '...bueno. Estuvo bien. Estuvo bien.',
+      'Nos vemos en la terminal, tortuga.'],
+    post: ['Estoy entrenando. Después te busco.'] },
+  rosa: { nom: 'DOÑA ROSA', look: 'rosa', plata: 500, gym: 'Medalla Escoba',
+    eq: [['trapin', 10], ['palomin', 10], ['cumbion', 12]],
+    pre: ['Ay, un pibe con bichos. Qué novedad.',
+      'Yo barro esta plaza desde el 74, nene.',
+      'Si querés pasar a la cancha, primero\nme vas a tener que ganar a mí.'],
+    win: ['¡Bien ahí, pibe! Me hiciste transpirar.',
+      'Tomá, la MEDALLA ESCOBA. Se la saqué\na un carrito de la feria, pero vale igual.',
+      '*Conseguiste la MEDALLA ESCOBA!*'],
+    post: ['Andá tranquilo a la cancha.\nY no te metas en líos.'] },
+  nacho: { nom: 'NACHO EL BARRA', look: 'nacho', plata: 900, gym: 'Medalla Bombo',
+    eq: [['gomon', 14], ['perrucho', 15], ['chorizon', 17]],
+    pre: ['Eh eh eh. ¿Vos quién sos?',
+      'Acá no entra cualquiera, papá.',
+      'Si aguantás los noventa minutos,\nte dejo pasar. Si no, te vas caminando.'],
+    win: ['¡AGUANTE EL PIBE!',
+      'Tomá la MEDALLA BOMBO. La hice con\nun parche de bombo que se rompió en el 92.',
+      '*Conseguiste la MEDALLA BOMBO!*'],
+    post: ['El domingo venite que jugamos\ncon los de al lado. Traé el bombo.'] },
+  trapito: { nom: 'EL TRAPITO', look: 'trapito', plata: 1400, gym: 'Medalla Cuidacoches',
+    eq: [['riachin', 16], ['ferneton', 17], ['riachonzo', 19]],
+    pre: ['Te lo cuido el puente, jefe.',
+      'Este puente es mío desde antes que\nvos nacieras. Yo cuido, yo cobro.',
+      'Querés cruzar a la terminal, ¿no?\nY bueno. Pagá con bichos.'],
+    win: ['Uh. Sos de fierro, pibe.',
+      'Tomá, la MEDALLA CUIDACOCHES.\nEs una chapa de auto, pero es MI chapa.',
+      '*Conseguiste la MEDALLA CUIDACOCHES!*'],
+    post: ['Cruzá tranquilo. Tu bici te la cuido\ngratis de acá en más.'] },
+  colectivero: { nom: 'EL COLECTIVERO', look: 'bondi', plata: 3000, gym: 'Pase Libre',
+    eq: [['cumbion', 20], ['gomon', 20], ['chorizon', 21], ['riachonzo', 21], ['bondimon', 24]],
+    pre: ['Así que vos sos el pibe del que\nhablan en el barrio.',
+      'Yo manejo el 22 hace veinte años.\nVi de todo arriba de este bondi.',
+      'Vi gente subir con un cordero.\nVi a un tipo cortarse el pelo en el fondo.',
+      'Si me ganás, te dejo viajar gratis\nde por vida. Eso es ser leyenda, pibe.',
+      '¡Suban que arranca!'],
+    win: ['...',
+      'La puta madre, pibe. Me ganaste.',
+      'Tomá. Este es el PASE LIBRE.',
+      'De acá en más el 22 es tu casa.',
+      '*Conseguiste el PASE LIBRE!*'],
+    post: ['Subí cuando quieras, campeón.\nEso sí: atrás, que adelante voy yo.'] }
+};
+
+===== ARCHIVO: src/50_mundo.js =====
+// ============================================================
+//  ESTADO DEL JUEGO + MUNDO
+// ============================================================
+let G = null;
+let modo = 'titulo';          // titulo | mundo | dialogo | menu | batalla | fin
+let dlg = null;               // cuadro de texto activo
+let fade = { v: 0, dir: 0, cb: null };
+let tiempoJuego = 0;
+
+function nuevaPartida(nombre) {
+  G = {
+    nombre: nombre || 'Pibe', mapa: 'casa', x: 5, y: 5, dir: 'd',
+    equipo: [], caja: [], guita: 500,
+    objetos: { chapita: 5, sanguche: 2 },
+    medallas: [], flags: {}, vistos: {}, pasos: 0, seg: 0
+  };
+}
+
+function darBicho(b) {
+  if (G.equipo.length < 6) { G.equipo.push(b); return 'equipo'; }
+  G.caja.push(b); return 'caja';
+}
+function darObjeto(id, n) { G.objetos[id] = (G.objetos[id] || 0) + (n || 1); }
+function sacarObjeto(id, n) {
+  G.objetos[id] = (G.objetos[id] || 0) - (n || 1);
+  if (G.objetos[id] <= 0) delete G.objetos[id];
+}
+function equipoVivo() { return G.equipo.some(b => b.hp > 0); }
+function curarTodo() { for (const b of G.equipo) { b.hp = b.hpMax; b.estado = ''; for (const a of b.ataques) a.pp = a.ppMax; } }
+
+// ------------------------------------------------------------
+//  CUADRO DE TEXTO
+// ------------------------------------------------------------
+function armarPaginas(lineas) {
+  const pgs = [];
+  for (const l of [].concat(lineas)) {
+    const w = wrapText(l, 142);
+    for (let i = 0; i < w.length; i += 2) pgs.push(w.slice(i, i + 2));
+  }
+  return pgs;
+}
+function decir(lineas, cb) {
+  dlg = { pgs: armarPaginas(lineas), p: 0, ch: 0, cb: cb || null, op: null, sel: 0, t: 0 };
+  modo = 'dialogo';
+}
+function preguntar(lineas, opciones, cb) {
+  dlg = { pgs: armarPaginas(lineas), p: 0, ch: 0, cb: null, op: opciones, sel: 0, fin: cb, t: 0 };
+  modo = 'dialogo';
+}
+function updDlg() {
+  const d = dlg;
+  const pg = d.pgs[d.p] || [''];
+  const total = pg.join('\n').length;
+  if (d.ch < total) {
+    d.ch += 2;
+    if (d.ch % 6 < 2) Audio2.sfx('bip');
+    if (KP.a || KP.b) d.ch = total;
+    return;
+  }
+  d.t++;
+  if (d.op && d.p >= d.pgs.length - 1) {          // menu de opciones
+    if (KP.up) { d.sel = (d.sel + d.op.length - 1) % d.op.length; Audio2.sfx('bip'); }
+    if (KP.dn) { d.sel = (d.sel + 1) % d.op.length; Audio2.sfx('bip'); }
+    if (KP.a) {
+      Audio2.sfx('sel');
+      const f = d.fin, s = d.sel; dlg = null; modo = 'mundo'; f && f(s);
+    }
+    if (KP.b && d.op.length === 2) {
+      Audio2.sfx('sel');
+      const f = d.fin; dlg = null; modo = 'mundo'; f && f(1);
+    }
+    return;
+  }
+  if (KP.a || KP.b) {
+    Audio2.sfx('sel');
+    if (d.p < d.pgs.length - 1) { d.p++; d.ch = 0; }
+    else { const c = d.cb; dlg = null; modo = 'mundo'; c && c(); }
+  }
+}
+function dibujarDlg() {
+  const d = dlg;
+  panel(0, 96, 160, 48);
+  const pg = d.pgs[d.p] || [''];
+  let n = d.ch;
+  for (let i = 0; i < pg.length; i++) {
+    const l = pg[i];
+    const vis = Math.max(0, Math.min(l.length, n));
+    drawText(ctx, l.slice(0, vis), 8, 104 + i * 11, PAL['0']);
+    n -= l.length + 1;
+  }
+  const total = pg.join('\n').length;
+  if (d.ch >= total) {
+    if (d.op && d.p >= d.pgs.length - 1) {
+      const w = 62, x = 160 - w - 6, y = 96 - 8 - d.op.length * 12;
+      panel(x, y, w, d.op.length * 12 + 8);
+      for (let i = 0; i < d.op.length; i++) drawText(ctx, d.op[i], x + 14, y + 5 + i * 12, PAL['0']);
+      drawText(ctx, '>', x + 5, y + 5 + d.sel * 12, PAL['0']);
+    } else if ((d.t >> 3) & 1) {
+      rect(150, 136, 4, 2, PAL['0']); rect(151, 138, 2, 1, PAL['0']);
+    }
+  }
+}
+
+// ------------------------------------------------------------
+//  PERSONAJE Y CAMARA
+// ------------------------------------------------------------
+const SPR = {};
+function spriteDe(look) { return SPR[look] || (SPR[look] = buildPerson(LOOKS[look])); }
+const DOG = mkArt(DOG_ART, { O: PAL['0'], H: PAL['7'] });
+
+const P = { x: 5, y: 5, dir: 'd', mov: 0, off: 0, dx: 0, dy: 0, fr: 0, anim: 0 };
+let cam = { x: 0, y: 0 };
+const DIRV = { u: [0, -1], d: [0, 1], l: [-1, 0], r: [1, 0] };
+
+function mapaAct() { return MAPAS[G.mapa]; }
+function tileEn(m, x, y) {
+  if (y < 0 || y >= m.t.length || x < 0 || x >= m.t[0].length) return null;
+  return m.t[y][x];
+}
+function npcEn(m, x, y) { return (m.npcs || []).find(n => n.x === x && n.y === y && !ocultoNpc(n)); }
+function ocultoNpc(n) {
+  if (n.id === 'bocha1' && G.flags.d_bocha1) return 0;
+  return 0;
+}
+function pasable(m, x, y) {
+  const t = tileEn(m, x, y);
+  if (t === null) return false;
+  if (SOLID.includes(t)) return false;
+  if (npcEn(m, x, y)) return false;
+  return true;
+}
+function camaraSeguir() {
+  const m = mapaAct(), mw = m.t[0].length * TILE, mh = m.t.length * TILE;
+  const pxx = P.x * TILE + P.dx * P.off, pyy = P.y * TILE + P.dy * P.off;
+  cam.x = mw <= W ? (mw - W) / 2 : clamp(pxx + 8 - W / 2, 0, mw - W);
+  cam.y = mh <= H ? (mh - H) / 2 : clamp(pyy + 8 - H / 2, 0, mh - H);
+}
+
+function irAMapa(nom, x, y, dir) {
+  G.mapa = nom; P.x = x; P.y = y; P.dir = dir || P.dir;
+  P.mov = 0; P.off = 0; P.dx = 0; P.dy = 0;
+  camaraSeguir();
+}
+function fundir(cb) { fade.dir = 1; fade.cb = cb; }
+
+// ------------------------------------------------------------
+//  INTERACCION
+// ------------------------------------------------------------
+function hablar() {
+  const m = mapaAct(), v = DIRV[P.dir];
+  let tx = P.x + v[0], ty = P.y + v[1];
+  let n = npcEn(m, tx, ty);
+  if (!n) {                                  // hablar por arriba del mostrador
+    const t = tileEn(m, tx, ty);
+    if (t === 'M' || t === 'B') n = npcEn(m, tx + v[0], ty + v[1]);
+  }
+  if (n) { n.d = { u: 'd', d: 'u', l: 'r', r: 'l' }[P.dir]; interactuarNpc(n); return; }
+  const o = (m.obj || []).find(o => o.x === tx && o.y === ty);
+  if (o) { decir(o.txt); return; }
+  const t = tileEn(m, tx, ty);
+  if (t === 'S') decir('Un cartel oxidado. No se lee un carajo.');
+  else if (t === '~') decir('El agua está espesa.\nMejor no meter la mano.');
+  else if (t === 'C') decir('Un contenedor. Huele a gloria.');
+  else if (t === 't') decir('La tele. Dan publicidad de un shampoo.');
+  else if (t === 'b') decir('Tu cama. Da ganas de tirarse un rato.');
+  else if (t === 'V') decir('La tribuna. Todavía se escucha el eco\ndel domingo pasado.');
+}
+
+function interactuarNpc(n) {
+  const g = GENTE[n.id];
+  if (!g) { decir('...'); return; }
+  if (g.esp === 'entrenador') { duelo(n.id); return; }
+  if (g.esp === 'chirola') { escenaChirola(); return; }
+  if (g.esp === 'kiosco') { escenaKiosco(); return; }
+  decir(g.dial());
+}
+
+function duelo(id) {
+  const d = DUELOS[id];
+  if (!d) { decir('...'); return; }
+  if (G.flags['d_' + id]) { decir(d.post); return; }
+  if (!equipoVivo()) { decir('Tus bichos están hechos bolsa.\nAndá a lo de Ramón antes de pelear.'); return; }
+  decir(d.pre, () => {
+    fundir(() => {
+      empezarBatalla({
+        tipo: 'entrenador', id, nom: d.nom, look: d.look,
+        eq: d.eq.map(e => crearBicho(e[0], e[1])), plata: d.plata, duelo: d
+      });
+    });
+  });
+}
+
+// ------------------------------------------------------------
+//  ENCUENTROS
+// ------------------------------------------------------------
+function chequearEncuentro() {
+  const m = mapaAct();
+  if (!m.enc) return;
+  const t = tileEn(m, P.x, P.y);
+  if (!m.enc.tiles.includes(t)) return;
+  if (!chance(m.enc.rate)) return;
+  if (!equipoVivo()) return;
+  const tot = m.enc.lista.reduce((a, e) => a + e[3], 0);
+  let r = rnd(tot), pick = m.enc.lista[0];
+  for (const e of m.enc.lista) { if (r < e[3]) { pick = e; break; } r -= e[3]; }
+  const lvl = pick[1] + rnd(pick[2] - pick[1] + 1);
+  fundir(() => empezarBatalla({ tipo: 'salvaje', eq: [crearBicho(pick[0], lvl)] }));
+}
+
+// ------------------------------------------------------------
+//  UPDATE / DRAW DEL MUNDO
+// ------------------------------------------------------------
+function updMundo() {
+  const m = mapaAct();
+  if (P.mov) {
+    P.off += 2; P.anim++;
+    if (P.off >= TILE) {
+      P.x += P.dx; P.y += P.dy; P.off = 0; P.mov = 0; P.dx = 0; P.dy = 0;
+      G.pasos++;
+      // warps
+      const w = (m.warps || []).find(w => !w.borde && w.x === P.x && w.y === P.y);
+      if (w) { Audio2.sfx('sel'); fundir(() => irAMapa(w.a, w.ax, w.ay, w.ad)); return; }
+      chequearEncuentro();
+      return;
+    }
+    return;
+  }
+  if (KP.st) { abrirMenu(); return; }
+  if (KP.a) { hablar(); return; }
+  let d = null;
+  if (K.up) d = 'u'; else if (K.dn) d = 'd'; else if (K.lf) d = 'l'; else if (K.rt) d = 'r';
+  if (!d) { P.anim = 0; return; }
+  P.dir = d;
+  const v = DIRV[d], nx = P.x + v[0], ny = P.y + v[1];
+  // salida por el borde
+  const bw = (m.warps || []).find(w => {
+    if (!w.borde) return false;
+    if (w.borde === 'n') return ny < 0 && P.x >= w.xs[0] && P.x <= w.xs[1];
+    if (w.borde === 's') return ny >= m.t.length && P.x >= w.xs[0] && P.x <= w.xs[1];
+    if (w.borde === 'o') return nx < 0 && P.y >= w.ys[0] && P.y <= w.ys[1];
+    if (w.borde === 'e') return nx >= m.t[0].length && P.y >= w.ys[0] && P.y <= w.ys[1];
+    return false;
+  });
+  if (bw) { fundir(() => irAMapa(bw.a, bw.ax, bw.ay, bw.ad)); return; }
+  if (pasable(m, nx, ny)) { P.mov = 1; P.dx = v[0]; P.dy = v[1]; P.off = 0; }
+  else { P.anim++; }
+}
+
+function dibujarMundo() {
+  const m = mapaAct();
+  rect(0, 0, W, H, PAL['0']);
+  const t0x = Math.floor(cam.x / TILE), t0y = Math.floor(cam.y / TILE);
+  for (let y = t0y; y <= t0y + 10; y++) {
+    for (let x = t0x; x <= t0x + 11; x++) {
+      const t = tileEn(m, x, y);
+      if (t === null || !TILES[t]) continue;
+      blit(TILES[t], x * TILE - cam.x, y * TILE - cam.y);
+    }
+  }
+  // gente
+  for (const n of (m.npcs || [])) {
+    if (ocultoNpc(n)) continue;
+    const s = spriteDe(n.c);
+    const px = n.x * TILE - cam.x, py = n.y * TILE - cam.y;
+    if (px < -16 || px > W || py < -16 || py > H) continue;
+    if (n.d === 'l') blitFlip(s.s[0], px, py);
+    else if (n.d === 'r') blit(s.s[0], px, py);
+    else if (n.d === 'u') blit(s.u[0], px, py);
+    else blit(s.d[0], px, py);
+  }
+  // vos
+  const s = spriteDe('pibe');
+  const fr = P.mov ? ((P.anim >> 3) & 1) : 0;
+  const px = P.x * TILE + P.dx * P.off - cam.x, py = P.y * TILE + P.dy * P.off - cam.y;
+  if (P.dir === 'l') blitFlip(s.s[fr], px, py);
+  else if (P.dir === 'r') blit(s.s[fr], px, py);
+  else if (P.dir === 'u') blit(s.u[fr], px, py);
+  else blit(s.d[fr], px, py);
+}
+
+// cartelito con el nombre del lugar
+let cartelNom = 0, cartelTxt = '';
+function mostrarCartel(txt) { cartelNom = 110; cartelTxt = txt; }
+function dibujarCartel() {
+  if (cartelNom <= 0) return;
+  cartelNom--;
+  const w = textWidth(cartelTxt) + 14;
+  panel(4, 4, w, 18);
+  drawText(ctx, cartelTxt, 11, 9, PAL['0']);
+}
+
+===== ARCHIVO: src/60_batalla.js =====
+// ============================================================
+//  BATALLA
+// ============================================================
+let B = null;
+const MON = {};
+function spriteMon(id) { return MON[id] || (MON[id] = mkArt(MON_ART[id])); }
+
+function empezarBatalla(cfg) {
+  const mio = G.equipo.findIndex(b => b.hp > 0);
+  B = {
+    tipo: cfg.tipo, id: cfg.id, nom: cfg.nom || '', look: cfg.look, duelo: cfg.duelo,
+    eq: cfg.eq, ei: 0, plata: cfg.plata || 0,
+    mi: mio < 0 ? 0 : mio,
+    fase: 'cola', q: [], nuevos: null, msg: '', ch: 0, sel: 0, sel2: 0, t: 0,
+    modA: {}, modD: {}, flash: 0, quien: '', huyo: 0, gano: 0, sacudir: 0,
+    lista: null, vistoNivel: []
+  };
+  modo = 'batalla';
+  Audio2.play('batalla');
+  G.vistos[cfg.eq[0].id] = 1;
+  const e = B.eq[0];
+  if (B.tipo === 'salvaje') push('¡Un ' + BICHOS[e.id].n + ' salvaje\nse te cruzó!');
+  else push('¡' + B.nom + ' te salió al cruce!');
+  push('¡Dale ' + yo().mote + ', metele!');
+}
+function yo() { return G.equipo[B.mi]; }
+function ene() { return B.eq[B.ei]; }
+// los mensajes que se generan adentro de un paso se meten justo despues de ese paso
+function push(msg, auto) { (B.nuevos || B.q).push({ msg, auto: auto === undefined ? 0 : auto }); }
+function pushFn(f) { (B.nuevos || B.q).push({ fn: f }); }
+
+// -------- calculos --------
+function modMul(s) { return s >= 0 ? (2 + s) / 2 : 2 / (2 - s); }
+function dano(atacante, defensor, mv, modAtk, modDef) {
+  const A = ATAQUES[mv], sa = statsDe(atacante), sd = statsDe(defensor);
+  if (!A.p) return { d: 0, ef: 1 };
+  const atk = sa.atk * modMul(modAtk || 0), def = sd.def * modMul(modDef || 0);
+  const ef = efect(A.t, BICHOS[defensor.id].t);
+  const stab = BICHOS[atacante.id].t.includes(A.t) ? 1.5 : 1;
+  const crit = chance(1 / 16) ? 2 : 1;
+  let d = Math.floor(Math.floor(Math.floor(2 * atacante.lvl / 5 + 2) * A.p * atk / def) / 50) + 2;
+  d = Math.floor(d * ef * stab * crit * (0.85 + Math.random() * 0.15));
+  return { d: Math.max(1, d), ef, crit };
+}
+function textoEf(ef) {
+  if (ef > 1.5) return '¡Le pegó justo donde duele!';
+  if (ef > 1) return '¡Le entró bien!';
+  if (ef === 0) return 'No le hizo ni cosquillas.';
+  if (ef < 1) return 'Le hizo cosquillas nomás...';
+  return '';
+}
+
+// -------- un turno --------
+function usarAtaque(esMio, mvId) {
+  const at = esMio ? yo() : ene(), df = esMio ? ene() : yo();
+  const A = ATAQUES[mvId];
+  const quien = esMio ? at.mote : (B.tipo === 'salvaje' ? BICHOS[at.id].n + ' salvaje' : 'El ' + BICHOS[at.id].n + ' rival');
+  pushFn(() => {
+    if (at.hp <= 0) return;
+    if (at.estado === 'aturdido' && chance(0.25)) { push(quien + ' está aturdido\ny no se puede mover.'); return; }
+    push(quien + ' usó ' + A.n + '!', 26);
+    pushFn(() => {
+      Audio2.sfx(A.p >= 60 ? 'fuerte' : A.p ? 'golpe' : 'bip');
+      if (A.e === 'cura') {
+        const c = Math.floor(at.hpMax / 2); at.hp = Math.min(at.hpMax, at.hp + c);
+        push(quien + ' se recuperó un poco.');
+        return;
+      }
+      if (!A.p) {
+        if (A.e === 'bajaAtk') { const k = esMio ? 'e' : 'm'; B.modA[k] = clamp((B.modA[k] || 0) - 1, -6, 0); push('¡' + df.mote + ' se comió el verso!\nBajó su ataque.'); }
+        else if (A.e === 'bajaDef') { const k = esMio ? 'e' : 'm'; B.modD[k] = clamp((B.modD[k] || 0) - 1, -6, 0); push('Bajó la defensa de ' + df.mote + '.'); }
+        return;
+      }
+      const mA = esMio ? (B.modA.m || 0) : (B.modA.e || 0);
+      const mD = esMio ? (B.modD.e || 0) : (B.modD.m || 0);
+      const r = dano(at, df, mvId, mA, mD);
+      df.hp = Math.max(0, df.hp - r.d);
+      B.flash = 10; B.quien = esMio ? 'e' : 'm'; B.sacudir = 8;
+      if (r.crit > 1) push('¡Justo en el palo! ¡Golpe crítico!');
+      const te = textoEf(r.ef); if (te) push(te);
+      if (A.e === 'tufo' && chance(0.35) && !df.estado) { df.estado = 'tufo'; push('¡' + df.mote + ' quedó con TUFO!'); }
+      if (A.e === 'aturde' && chance(0.35) && !df.estado) { df.estado = 'aturdido'; push('¡' + df.mote + ' quedó ATURDIDO!'); }
+      if (A.e === 'bajaDef' && chance(0.5)) { const k = esMio ? 'e' : 'm'; B.modD[k] = clamp((B.modD[k] || 0) - 1, -6, 0); push('Bajó la defensa de ' + df.mote + '.'); }
+      if (A.e === 'chupa') { const c = Math.floor(r.d / 2); at.hp = Math.min(at.hpMax, at.hp + c); push(quien + ' le chupó la energía.'); }
+      pushFn(() => { if (df.hp <= 0) caida(!esMio); });
+    });
+  });
+}
+
+function finDeTurno() {
+  pushFn(() => {
+    for (const [b, esMio] of [[yo(), 1], [ene(), 0]]) {
+      if (b.hp > 0 && b.estado === 'tufo') {
+        b.hp = Math.max(0, b.hp - Math.max(1, Math.floor(b.hpMax / 16)));
+        push('¡El TUFO le está haciendo mal\na ' + b.mote + '!');
+        pushFn(() => { if (b.hp <= 0) caida(!esMio); });
+      }
+    }
+  });
+}
+
+function caida(cayoElMio) {
+  B.q = B.q.filter(q => !q._turno);      // se corta el turno, no sigue nadie
+  if (cayoElMio) {
+    push('¡' + yo().mote + ' no da más!');
+    pushFn(() => {
+      if (!equipoVivo()) {
+        push('¡Te quedaste sin bichos!');
+        push('Te arrastraste hasta el kiosco de Ramón...');
+        pushFn(() => terminarBatalla('perdiste'));
+      } else { B.fase = 'cambiar'; B.forzado = 1; B.sel = Math.max(0, G.equipo.findIndex(x => x.hp > 0)); }
+    });
+  } else {
+    const e = ene();
+    push('¡' + (B.tipo === 'salvaje' ? BICHOS[e.id].n + ' salvaje' : 'El ' + BICHOS[e.id].n) + ' quedó K.O.!');
+    pushFn(() => darExp(e));
+  }
+}
+
+function darExp(e) {
+  const g = Math.floor(BICHOS[e.id].x * e.lvl / 7) * (B.tipo === 'salvaje' ? 1 : 1.5);
+  const b = yo();
+  if (b.hp > 0) {
+    b.exp += Math.floor(g);
+    push(b.mote + ' ganó ' + Math.floor(g) + ' de experiencia.');
+    pushFn(() => subirNivel(b));
+  }
+  pushFn(() => {
+    if (B.tipo === 'salvaje') { terminarBatalla('gano'); return; }
+    if (B.ei < B.eq.length - 1) {
+      B.ei++; B.modA.e = 0; B.modD.e = 0;
+      push(B.nom + ' mandó a ' + BICHOS[ene().id].n + '!');
+      pushFn(() => { B.fase = 'menu'; });
+    } else {
+      push('¡Le ganaste a ' + B.nom + '!');
+      pushFn(() => terminarBatalla('gano'));
+    }
+  });
+}
+
+function subirNivel(b) {
+  while (b.lvl < 50 && b.exp >= expParaNivel(b.lvl + 1)) {
+    b.lvl++;
+    const nuevo = statHP(BICHOS[b.id].b[0], b.lvl);
+    b.hp += nuevo - b.hpMax; b.hpMax = nuevo;
+    Audio2.sfx('medalla');
+    push('¡' + b.mote + ' subió a nivel ' + b.lvl + '!');
+    for (const [lv, mv] of BICHOS[b.id].ap) {
+      if (lv !== b.lvl) continue;
+      if (b.ataques.some(a => a.id === mv)) continue;
+      if (b.ataques.length < 4) {
+        b.ataques.push({ id: mv, pp: ATAQUES[mv].pp, ppMax: ATAQUES[mv].pp });
+        push('¡' + b.mote + ' aprendió ' + ATAQUES[mv].n + '!');
+      } else {
+        pushFn(() => { B.aprender = { b, mv }; B.fase = 'aprender'; B.sel = 0; });
+      }
+    }
+    const ev = BICHOS[b.id].evo;
+    if (ev && b.lvl >= ev[1]) {
+      pushFn(() => {
+        const viejo = BICHOS[b.id].n;
+        if (b.mote === viejo) b.mote = BICHOS[ev[0]].n;
+        b.id = ev[0];
+        const nh = statHP(BICHOS[b.id].b[0], b.lvl);
+        b.hp += nh - b.hpMax; b.hpMax = nh;
+        G.vistos[b.id] = 1;
+        Audio2.sfx('capturado');
+        push('¡¿Qué?! ¡' + viejo + ' se transformó\nen ' + BICHOS[b.id].n + '!');
+      });
+    }
+  }
+}
+
+// -------- chapitas --------
+function tirarChapita(itemId) {
+  const it = OBJETOS[itemId], e = ene();
+  sacarObjeto(itemId);
+  push('¡Le tiraste una ' + it.n + '!', 24);
+  pushFn(() => {
+    Audio2.sfx('chapita');
+    if (B.tipo !== 'salvaje') { push('¡Eh! ¡No le podés robar el bicho\na otro! ¡Qué falta de códigos!'); pushFn(() => { B.fase = 'menu'; }); return; }
+    const rate = BICHOS[e.id].cap;
+    let p = (1 - (e.hp / e.hpMax) * 0.7) * (rate / 255) * it.rate;
+    if (e.estado) p *= 1.4;
+    p = clamp(p, 0.03, 0.95);
+    let sac = 0; while (sac < 3 && chance(Math.pow(p, 0.34))) sac++;
+    if (chance(p)) {
+      push('¡Sacudió ' + sac + ' veces...', 20);
+      pushFn(() => {
+        Audio2.sfx('capturado');
+        push('¡Cayó! ¡' + BICHOS[e.id].n + ' es tuyo!');
+        const d = darBicho(e);
+        G.vistos[e.id] = 1;
+        if (d === 'caja') push('Como tenías seis, lo mandaste\na la caja de zapatos de tu pieza.');
+        pushFn(() => terminarBatalla('capturo'));
+      });
+    } else {
+      push('Sacudió ' + sac + ' veces...', 20);
+      pushFn(() => { Audio2.sfx('escapo'); push('¡Se escapó! Casi.'); pushFn(() => turnoEnemigoSolo()); });
+    }
+  });
+}
+function marcarTurno(desde) { for (let i = desde; i < B.q.length; i++) B.q[i]._turno = 1; }
+function turnoEnemigoSolo() {
+  const desde = B.q.length;
+  atacarIA();
+  finDeTurno();
+  pushFn(() => { if (B.fase === 'cola') B.fase = 'menu'; });
+  marcarTurno(desde);
+}
+
+function atacarIA() {
+  const e = ene(), m = yo();
+  const dispo = e.ataques.filter(a => a.pp > 0);
+  if (!dispo.length) { usarAtaque(false, 'forcejeo'); return; }
+  let mejor = dispo[0], mejorV = -1;
+  for (const a of dispo) {
+    const A = ATAQUES[a.id];
+    let v = A.p ? A.p * efect(A.t, BICHOS[m.id].t) : 25;
+    v *= 0.8 + Math.random() * 0.4;
+    if (v > mejorV) { mejorV = v; mejor = a; }
+  }
+  mejor.pp--;
+  usarAtaque(false, mejor.id);
+}
+
+function turnoJugador(mvId) {
+  const mv = yo().ataques.find(a => a.id === mvId);
+  if (mv) mv.pp--;
+  const A = ATAQUES[mvId];
+  let vm = statsDe(yo()).vel, ve = statsDe(ene()).vel;
+  if (yo().estado === 'aturdido') vm = Math.floor(vm / 2);
+  if (ene().estado === 'aturdido') ve = Math.floor(ve / 2);
+  const primero = A.e === 'primero' ? true : (vm === ve ? chance(0.5) : vm > ve);
+  const desde = B.q.length;
+  if (primero) { usarAtaque(true, mvId); atacarIA(); }
+  else { atacarIA(); usarAtaque(true, mvId); }
+  finDeTurno();
+  pushFn(() => { if (B.fase === 'cola') B.fase = 'menu'; });
+  marcarTurno(desde);
+  B.fase = 'cola';
+}
+
+function intentarRajar() {
+  if (B.tipo !== 'salvaje') { push('¡No podés rajar de un duelo!\nQuedás pegado para siempre.'); pushFn(() => { B.fase = 'menu'; }); B.fase = 'cola'; return; }
+  const p = clamp(0.35 + (statsDe(yo()).vel - statsDe(ene()).vel) / 100, 0.2, 0.95);
+  if (chance(p)) { push('¡Rajaste como si nada!'); pushFn(() => terminarBatalla('rajo')); }
+  else { push('¡No pudiste rajar!'); turnoEnemigoSolo(); }
+  B.fase = 'cola';
+}
+
+function terminarBatalla(res) {
+  const d = B.duelo, id = B.id, plata = B.plata, tipo = B.tipo;
+  if (res === 'perdiste') {
+    const perdida = Math.floor(G.guita / 2);
+    G.guita -= perdida;
+    curarTodo();
+    B = null; modo = 'mundo'; Audio2.play('barrio');
+    fundir(() => {
+      irAMapa('kiosco', 5, 5, 'u');
+      decir(['Ramón te levantó del piso y te curó\nlos bichos.',
+        'Se cobró $' + perdida + ' por las molestias.',
+        '"No es nada, pibe. Andá tranquilo."']);
+    });
+    return;
+  }
+  if (res === 'gano' && tipo === 'entrenador') {
+    G.flags['d_' + id] = 1;
+    G.guita += plata;
+    B = null; modo = 'mundo'; Audio2.play('barrio');
+    const lineas = (d.win || []).slice();
+    lineas.push('Te dio $' + plata + '.');
+    if (d.gym) {
+      G.medallas.push(d.gym);
+      fundir(() => decir(lineas, () => { Audio2.sfx('medalla'); if (id === 'colectivero') finalDelJuego(); }));
+    } else fundir(() => decir(lineas));
+    return;
+  }
+  B = null; modo = 'mundo'; Audio2.play('barrio');
+  fundir(() => { });
+}
+
+// -------- update --------
+function updBatalla() {
+  B.t++;
+  if (B.flash > 0) B.flash--;
+  if (B.sacudir > 0) B.sacudir--;
+  if (B.fase === 'cola') { procesarCola(); return; }
+  if (B.fase === 'menu') return menuBatalla();
+  if (B.fase === 'ataques') return menuAtaques();
+  if (B.fase === 'cambiar') return menuCambio();
+  if (B.fase === 'bolso') return menuBolsoBatalla();
+  if (B.fase === 'aprender') return menuAprender();
+}
+function procesarCola() {
+  if (!B.q.length) { B.fase = 'menu'; return; }
+  const it = B.q[0];
+  if (it.fn) {
+    B.q.shift(); B.nuevos = [];
+    it.fn();
+    if (!B) return;                       // la batalla se termino adentro del paso
+    const n = B.nuevos; B.nuevos = null;
+    if (n.length) B.q = n.concat(B.q);
+    return;
+  }
+  if (B.msg !== it.msg) { B.msg = it.msg; B.ch = 0; B.esperando = 0; }
+  const total = B.msg.length;
+  if (B.ch < total) {
+    B.ch += 2;
+    if (KP.a || KP.b) B.ch = total;
+    return;
+  }
+  if (it.auto) { it.auto--; if (it.auto <= 0) { B.q.shift(); B.msg = ''; } return; }
+  if (KP.a || KP.b) { Audio2.sfx('sel'); B.q.shift(); B.msg = ''; }
+}
+function navegar(n, cols) {
+  cols = cols || 1;
+  if (KP.up) { B.sel = (B.sel - cols + n * 2) % n; Audio2.sfx('bip'); }
+  if (KP.dn) { B.sel = (B.sel + cols) % n; Audio2.sfx('bip'); }
+  if (cols > 1) {
+    if (KP.lf) { B.sel = (B.sel + n - 1) % n; Audio2.sfx('bip'); }
+    if (KP.rt) { B.sel = (B.sel + 1) % n; Audio2.sfx('bip'); }
+  }
+}
+function menuBatalla() {
+  navegar(4, 2);
+  if (KP.a) {
+    Audio2.sfx('sel');
+    if (B.sel === 0) {
+      if (yo().ataques.every(a => a.pp <= 0)) {     // sin PP: forcejeo
+        B.q = []; push('¡A ' + yo().mote + ' no le quedan\nataques! ¡Se tira a los manotazos!');
+        turnoJugador('forcejeo'); return;
+      }
+      B.fase = 'ataques'; B.sel = 0;
+    }
+    else if (B.sel === 1) { B.fase = 'cambiar'; B.forzado = 0; B.sel = 0; }
+    else if (B.sel === 2) { B.fase = 'bolso'; B.sel = 0; B.lista = Object.keys(G.objetos); }
+    else intentarRajar();
+  }
+}
+function menuAtaques() {
+  const mv = yo().ataques;
+  navegar(mv.length);
+  if (KP.b) { Audio2.sfx('sel'); B.fase = 'menu'; B.sel = 0; return; }
+  if (KP.a) {
+    const a = mv[B.sel];
+    if (a.pp <= 0) { Audio2.sfx('escapo'); return; }
+    Audio2.sfx('sel');
+    turnoJugador(a.id);
+  }
+}
+function menuCambio() {
+  navegar(G.equipo.length);
+  if (KP.b && !B.forzado) { Audio2.sfx('sel'); B.fase = 'menu'; B.sel = 0; return; }
+  if (KP.a) {
+    const i = B.sel;
+    if (G.equipo[i].hp <= 0) { Audio2.sfx('escapo'); return; }
+    if (i === B.mi && !B.forzado) { Audio2.sfx('escapo'); return; }
+    Audio2.sfx('sel');
+    const era = B.forzado;
+    B.mi = i; B.modA.m = 0; B.modD.m = 0;
+    const saludo = [{ msg: '¡Vení ' + yo().mote + '!' }];
+    B.q = era ? saludo : saludo.concat(B.q);
+    B.fase = 'cola'; B.sel = 0;
+    if (!era) { atacarIA(); finDeTurno(); pushFn(() => { if (B.fase === 'cola') B.fase = 'menu'; }); }
+    B.forzado = 0;
+  }
+}
+function menuBolsoBatalla() {
+  const l = B.lista;
+  if (!l.length) { B.fase = 'menu'; return; }
+  navegar(l.length);
+  if (KP.b) { Audio2.sfx('sel'); B.fase = 'menu'; B.sel = 0; return; }
+  if (KP.a) {
+    const id = l[B.sel], it = OBJETOS[id];
+    Audio2.sfx('sel');
+    B.fase = 'cola'; B.q = [];
+    if (it.tipo === 'bola') { tirarChapita(id); }
+    else if (it.tipo === 'cura') {
+      const b = yo();
+      if (b.hp >= b.hpMax && !b.estado) { push('No hace falta.'); pushFn(() => { B.fase = 'menu'; }); return; }
+      sacarObjeto(id);
+      const c = Math.min(it.cura, b.hpMax - b.hp); b.hp += c;
+      if (it.limpia) b.estado = '';
+      Audio2.sfx('curar');
+      push('Le diste un ' + it.n + '.\n' + b.mote + ' recuperó ' + c + ' de vida.');
+      turnoEnemigoSolo();
+    } else if (it.tipo === 'estado') {
+      const b = yo();
+      if (!b.estado) { push('No le pasa nada.'); pushFn(() => { B.fase = 'menu'; }); return; }
+      sacarObjeto(id); b.estado = ''; Audio2.sfx('curar');
+      push(b.mote + ' quedó como nuevo.');
+      turnoEnemigoSolo();
+    } else { push('Acá no sirve.'); pushFn(() => { B.fase = 'menu'; }); }
+  }
+}
+function menuAprender() {
+  const { b, mv } = B.aprender;
+  navegar(5);
+  if (KP.a) {
+    Audio2.sfx('sel');
+    // ojo: NO se puede vaciar la cola, adentro esta lo que sigue de la batalla
+    let nuevos;
+    if (B.sel < 4) {
+      const viejo = ATAQUES[b.ataques[B.sel].id].n;
+      b.ataques[B.sel] = { id: mv, pp: ATAQUES[mv].pp, ppMax: ATAQUES[mv].pp };
+      nuevos = [{ msg: 'Se olvidó de ' + viejo + '...' }, { msg: '¡Y aprendió ' + ATAQUES[mv].n + '!' }];
+    } else {
+      nuevos = [{ msg: b.mote + ' no aprendió ' + ATAQUES[mv].n + '.' }];
+    }
+    B.q = nuevos.concat(B.q); B.sel = 0; B.fase = 'cola';
+  }
+}
+
+// -------- dibujo --------
+function barraHP(x, y, w, hp, max) {
+  rect(x - 1, y - 1, w + 2, 5, PAL['0']);
+  rect(x, y, w, 3, PAL['2']);
+  const f = Math.max(0, Math.round(w * hp / max));
+  const col = hp / max > 0.5 ? PAL['a'] : hp / max > 0.2 ? PAL['i'] : PAL['g'];
+  rect(x, y, f, 3, col);
+}
+function cajaHP(b, x, y, mio) {
+  const w = mio ? 74 : 72, h = mio ? 30 : 24;
+  panel(x, y, w, h);
+  drawText(ctx, b.mote.slice(0, 10), x + 5, y + 4, PAL['0']);
+  drawText(ctx, 'N' + b.lvl, x + w - 20, y + 4, PAL['0']);
+  drawText(ctx, 'VIDA', x + 5, y + 13, PAL['0']);
+  barraHP(x + 28, y + 15, w - 34, b.hp, b.hpMax);
+  if (mio) drawText(ctx, b.hp + '/' + b.hpMax, x + 24, y + 21, PAL['0']);
+  if (b.estado) drawText(ctx, b.estado === 'tufo' ? 'TUF' : 'ATU', x + 5, y + (mio ? 21 : 15), PAL['g']);
+}
+function dibujarBatalla() {
+  rect(0, 0, W, H, PAL['e']);
+  rect(0, 0, W, 40, PAL['d']);
+  rect(0, 74, W, 22, PAL['b']);
+  rect(0, 88, W, 8, PAL['a']);
+  // pisos
+  ctx.fillStyle = PAL['a'];
+  ctx.beginPath(); ctx.ellipse(128, 56, 30, 8, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = PAL['9'];
+  ctx.beginPath(); ctx.ellipse(34, 92, 34, 9, 0, 0, 7); ctx.fill();
+  const sh = B.sacudir > 0 ? ((B.sacudir >> 1) & 1 ? 2 : -2) : 0;
+  const e = ene(), m = yo();
+  if (!(B.flash > 0 && B.quien === 'e' && (B.flash >> 1) & 1))
+    blit(spriteMon(e.id), 104 + (B.quien === 'e' ? sh : 0), 58 - spriteMon(e.id).height * 2, 2);
+  if (!(B.flash > 0 && B.quien === 'm' && (B.flash >> 1) & 1))
+    blit(spriteMon(m.id), 8 + (B.quien === 'm' ? sh : 0), 94 - spriteMon(m.id).height * 2, 2);
+  cajaHP(e, 4, 6, 0);
+  cajaHP(m, 82, 62, 1);
+  // caja de texto
+  panel(0, 96, 160, 48);
+  if (B.fase === 'cola') {
+    const ls = B.msg.split('\n'); let n = B.ch;
+    for (let i = 0; i < ls.length; i++) {
+      drawText(ctx, ls[i].slice(0, Math.max(0, Math.min(ls[i].length, n))), 8, 104 + i * 11, PAL['0']);
+      n -= ls[i].length + 1;
+    }
+    if (B.ch >= B.msg.length && !B.q[0]?.auto && ((B.t >> 3) & 1)) { rect(150, 136, 4, 2, PAL['0']); rect(151, 138, 2, 1, PAL['0']); }
+  } else if (B.fase === 'menu') {
+    drawText(ctx, '¿Qué hacés?', 8, 104, PAL['0']);
+    const op = ['PELEAR', 'BICHO', 'BOLSO', 'RAJAR'];
+    for (let i = 0; i < 4; i++) {
+      const x = 78 + (i % 2) * 40, y = 104 + ((i / 2) | 0) * 14;
+      drawText(ctx, op[i], x, y, PAL['0']);
+      if (B.sel === i) drawText(ctx, '>', x - 8, y, PAL['0']);
+    }
+  } else if (B.fase === 'ataques') {
+    const mv = yo().ataques;
+    for (let i = 0; i < mv.length; i++) {
+      const A = ATAQUES[mv[i].id];
+      drawText(ctx, A.n, 14, 102 + i * 10, PAL['0']);
+      if (B.sel === i) drawText(ctx, '>', 5, 102 + i * 10, PAL['0']);
+    }
+    const A = ATAQUES[mv[B.sel].id];
+    drawText(ctx, A.t, 100, 102, PAL['0']);
+    drawText(ctx, 'PP ' + mv[B.sel].pp + '/' + mv[B.sel].ppMax, 100, 114, PAL['0']);
+    drawText(ctx, 'POT ' + (A.p || '--'), 100, 126, PAL['0']);
+  } else if (B.fase === 'cambiar') {
+    for (let i = 0; i < G.equipo.length; i++) {
+      const b = G.equipo[i];
+      drawText(ctx, b.mote.slice(0, 9), 14, 100 + i * 8, b.hp > 0 ? PAL['0'] : PAL['3']);
+      drawText(ctx, 'N' + b.lvl, 84, 100 + i * 8, PAL['0']);
+      drawText(ctx, b.hp + '/' + b.hpMax, 108, 100 + i * 8, PAL['0']);
+      if (B.sel === i) drawText(ctx, '>', 5, 100 + i * 8, PAL['0']);
+    }
+  } else if (B.fase === 'bolso') {
+    const l = B.lista;
+    for (let i = 0; i < Math.min(4, l.length); i++) {
+      const k = l[i];
+      drawText(ctx, OBJETOS[k].n, 14, 102 + i * 10, PAL['0']);
+      drawText(ctx, 'x' + G.objetos[k], 110, 102 + i * 10, PAL['0']);
+      if (B.sel === i) drawText(ctx, '>', 5, 102 + i * 10, PAL['0']);
+    }
+  } else if (B.fase === 'aprender') {
+    const b = B.aprender.b;
+    drawText(ctx, '¿Qué ataque olvida?', 8, 100, PAL['0']);
+    for (let i = 0; i < 4; i++) {
+      drawText(ctx, ATAQUES[b.ataques[i].id].n, 14, 110 + i * 8, PAL['0']);
+      if (B.sel === i) drawText(ctx, '>', 5, 110 + i * 8, PAL['0']);
+    }
+    drawText(ctx, 'NINGUNO', 100, 110 + 24, PAL['0']);
+    if (B.sel === 4) drawText(ctx, '>', 92, 134, PAL['0']);
+  }
+}
+
+===== ARCHIVO: src/70_menus.js =====
+// ============================================================
+//  MENUES, KIOSCO Y ESCENAS
+// ============================================================
+let MN = null;
+function abrirMenu() { MN = { p: 'principal', sel: 0, sel2: 0, top: 0 }; modo = 'menu'; Audio2.sfx('sel'); }
+function cerrarMenu() { MN = null; modo = 'mundo'; }
+
+const MENU_OP = ['BICHOS', 'BOLSO', 'MEDALLAS', 'GUARDAR', 'SALIR'];
+
+function updMenu() {
+  const p = MN.p;
+  if (p === 'principal') {
+    if (KP.up) { MN.sel = (MN.sel + MENU_OP.length - 1) % MENU_OP.length; Audio2.sfx('bip'); }
+    if (KP.dn) { MN.sel = (MN.sel + 1) % MENU_OP.length; Audio2.sfx('bip'); }
+    if (KP.b || KP.st) { Audio2.sfx('sel'); cerrarMenu(); return; }
+    if (KP.a) {
+      Audio2.sfx('sel');
+      if (MN.sel === 0) { MN.p = 'bichos'; MN.sel2 = 0; }
+      else if (MN.sel === 1) { MN.p = 'bolso'; MN.sel2 = 0; }
+      else if (MN.sel === 2) { MN.p = 'medallas'; }
+      else if (MN.sel === 3) {
+        const ok = saveGame(G);
+        MN.p = 'aviso'; MN.txt = ok ? 'Guardado en el teléfono.\nPodés cerrar tranquilo.' : 'No se pudo guardar.\n(Modo incógnito?)';
+      }
+      else cerrarMenu();
+    }
+    return;
+  }
+  if (p === 'aviso' || p === 'medallas') {
+    if (KP.a || KP.b) { Audio2.sfx('sel'); MN.p = 'principal'; }
+    return;
+  }
+  if (p === 'bichos') {
+    const n = G.equipo.length;
+    if (KP.up && n) { MN.sel2 = (MN.sel2 + n - 1) % n; Audio2.sfx('bip'); }
+    if (KP.dn && n) { MN.sel2 = (MN.sel2 + 1) % n; Audio2.sfx('bip'); }
+    if (KP.b) { Audio2.sfx('sel'); MN.p = 'principal'; return; }
+    if (KP.a && n) { Audio2.sfx('sel'); MN.p = 'ficha'; }
+    return;
+  }
+  if (p === 'ficha') {
+    if (KP.a || KP.b) { Audio2.sfx('sel'); MN.p = 'bichos'; }
+    return;
+  }
+  if (p === 'bolso') {
+    const l = Object.keys(G.objetos), n = l.length;
+    if (KP.up && n) { MN.sel2 = (MN.sel2 + n - 1) % n; Audio2.sfx('bip'); }
+    if (KP.dn && n) { MN.sel2 = (MN.sel2 + 1) % n; Audio2.sfx('bip'); }
+    if (KP.b) { Audio2.sfx('sel'); MN.p = 'principal'; return; }
+    if (KP.a && n) {
+      const it = OBJETOS[l[MN.sel2]];
+      Audio2.sfx('sel');
+      if (it.tipo === 'cura' || it.tipo === 'estado' || it.tipo === 'revive') { MN.p = 'usarEn'; MN.item = l[MN.sel2]; MN.sel3 = 0; }
+      else { MN.p = 'aviso'; MN.txt = it.n + '.\n' + it.d; }
+    }
+    return;
+  }
+  if (p === 'usarEn') {
+    const n = G.equipo.length;
+    if (KP.up) { MN.sel3 = (MN.sel3 + n - 1) % n; Audio2.sfx('bip'); }
+    if (KP.dn) { MN.sel3 = (MN.sel3 + 1) % n; Audio2.sfx('bip'); }
+    if (KP.b) { Audio2.sfx('sel'); MN.p = 'bolso'; return; }
+    if (KP.a) {
+      const b = G.equipo[MN.sel3], it = OBJETOS[MN.item];
+      if (it.tipo === 'revive') {
+        if (b.hp > 0) { MN.p = 'aviso'; MN.txt = 'Ese está bien despierto.'; return; }
+        b.hp = Math.floor(b.hpMax / 2); b.estado = ''; sacarObjeto(MN.item);
+        Audio2.sfx('curar'); MN.p = 'aviso'; MN.txt = b.mote + ' se levantó.\n"¿Qué pasó?"';
+      } else if (it.tipo === 'estado') {
+        if (!b.estado) { MN.p = 'aviso'; MN.txt = 'No le pasa nada.'; return; }
+        b.estado = ''; sacarObjeto(MN.item); Audio2.sfx('curar');
+        MN.p = 'aviso'; MN.txt = b.mote + ' quedó como nuevo.';
+      } else {
+        if (b.hp <= 0) { MN.p = 'aviso'; MN.txt = 'Ese está desmayado.\nNecesita un Bizcochito.'; return; }
+        if (b.hp >= b.hpMax) { MN.p = 'aviso'; MN.txt = 'Está al mango de vida.'; return; }
+        const c = Math.min(it.cura, b.hpMax - b.hp); b.hp += c;
+        if (it.limpia) b.estado = '';
+        sacarObjeto(MN.item); Audio2.sfx('curar');
+        MN.p = 'aviso'; MN.txt = b.mote + ' recuperó ' + c + ' de vida.';
+      }
+      if (!G.objetos[MN.item]) MN.sel2 = 0;
+    }
+    return;
+  }
+  if (p === 'tienda') {
+    const l = MN.stock, n = l.length + 1;
+    if (KP.up) { MN.sel2 = (MN.sel2 + n - 1) % n; Audio2.sfx('bip'); }
+    if (KP.dn) { MN.sel2 = (MN.sel2 + 1) % n; Audio2.sfx('bip'); }
+    if (KP.b) { Audio2.sfx('sel'); cerrarMenu(); return; }
+    if (KP.a) {
+      Audio2.sfx('sel');
+      if (MN.sel2 >= l.length) { cerrarMenu(); return; }
+      const id = l[MN.sel2], it = OBJETOS[id];
+      if (G.guita < it.precio) { MN.p = 'aviso2'; MN.txt = 'No te alcanza, pibe.\n"Fiado no, que ya me fundí una vez."'; return; }
+      G.guita -= it.precio; darObjeto(id, 1); Audio2.sfx('plata');
+      MN.p = 'aviso2'; MN.txt = 'Te llevaste un ' + it.n + '.\n"Gracias, volvé cuando quieras."';
+    }
+    return;
+  }
+  if (p === 'aviso2') { if (KP.a || KP.b) { Audio2.sfx('sel'); MN.p = 'tienda'; } return; }
+}
+
+function dibujarMenu() {
+  const p = MN.p;
+  if (p === 'principal') {
+    const w = 76, x = W - w - 4, h = MENU_OP.length * 12 + 10;
+    panel(x, 4, w, h);
+    for (let i = 0; i < MENU_OP.length; i++) {
+      drawText(ctx, MENU_OP[i], x + 15, 9 + i * 12, PAL['0']);
+      if (MN.sel === i) drawText(ctx, '>', x + 6, 9 + i * 12, PAL['0']);
+    }
+    panel(4, 108, 90, 32);
+    drawText(ctx, G.nombre, 10, 113, PAL['0']);
+    drawText(ctx, '$' + G.guita, 10, 126, PAL['0']);
+    return;
+  }
+  if (p === 'bichos' || p === 'usarEn') {
+    const sel = p === 'bichos' ? MN.sel2 : MN.sel3;
+    rect(0, 0, W, H, PAL['4']);
+    panel(0, 0, W, H);
+    drawText(ctx, p === 'usarEn' ? '¿A quién?' : 'TU BANDA', 8, 5, PAL['0']);
+    for (let i = 0; i < G.equipo.length; i++) {
+      const b = G.equipo[i], y = 18 + i * 20;
+      blit(spriteMon(b.id), 11, y - 2, 0.6);
+      drawText(ctx, b.mote, 34, y, b.hp > 0 ? PAL['0'] : PAL['3']);
+      drawText(ctx, 'N' + b.lvl, 118, y, PAL['0']);
+      barraHP(34, y + 11, 60, b.hp, b.hpMax);
+      drawText(ctx, b.hp + '/' + b.hpMax, 100, y + 8, PAL['0']);
+      if (sel === i) drawText(ctx, '>', 3, y, PAL['0']);
+    }
+    if (!G.equipo.length) drawText(ctx, 'No tenés ni un bicho.', 8, 30, PAL['0']);
+    drawText(ctx, 'A = ver   B = volver', 8, 134, PAL['2']);
+    return;
+  }
+  if (p === 'ficha') {
+    const b = G.equipo[MN.sel2], e = BICHOS[b.id];
+    rect(0, 0, W, H, PAL['e']);
+    panel(0, 0, W, H);
+    blit(spriteMon(b.id), 6, 8, 1.6);
+    drawText(ctx, b.mote, 58, 10, PAL['0']);
+    drawText(ctx, 'NIVEL ' + b.lvl, 58, 22, PAL['0']);
+    drawText(ctx, e.t.join('/'), 58, 34, PAL['0']);
+    drawText(ctx, 'VIDA ' + b.hp + '/' + b.hpMax, 58, 46, PAL['0']);
+    const s = statsDe(b);
+    drawText(ctx, 'ATQ ' + s.atk + '  DEF ' + s.def + '  VEL ' + s.vel, 6, 62, PAL['0']);
+    for (let i = 0; i < b.ataques.length; i++) {
+      const A = ATAQUES[b.ataques[i].id];
+      drawText(ctx, A.n, 6, 74 + i * 10, PAL['0']);
+      drawText(ctx, b.ataques[i].pp + '/' + b.ataques[i].ppMax, 122, 74 + i * 10, PAL['0']);
+    }
+    const d = wrapText(e.d, 150);
+    for (let i = 0; i < Math.min(3, d.length); i++) drawText(ctx, d[i], 6, 115 + i * 10, PAL['2']);
+    return;
+  }
+  if (p === 'bolso') {
+    const l = Object.keys(G.objetos);
+    rect(0, 0, W, H, PAL['4']); panel(0, 0, W, H);
+    drawText(ctx, 'BOLSO', 8, 5, PAL['0']);
+    drawText(ctx, '$' + G.guita, 110, 5, PAL['0']);
+    if (!l.length) drawText(ctx, 'Vacío. Como la heladera.', 8, 30, PAL['0']);
+    for (let i = 0; i < l.length && i < 8; i++) {
+      const k = l[i];
+      drawText(ctx, OBJETOS[k].n, 14, 20 + i * 12, PAL['0']);
+      drawText(ctx, 'x' + G.objetos[k], 128, 20 + i * 12, PAL['0']);
+      if (MN.sel2 === i) drawText(ctx, '>', 4, 20 + i * 12, PAL['0']);
+    }
+    if (l.length) {
+      const d = wrapText(OBJETOS[l[MN.sel2]].d, 148);
+      for (let i = 0; i < Math.min(2, d.length); i++) drawText(ctx, d[i], 6, 120 + i * 10, PAL['2']);
+    }
+    return;
+  }
+  if (p === 'medallas') {
+    rect(0, 0, W, H, PAL['4']); panel(0, 0, W, H);
+    drawText(ctx, 'MEDALLAS', 8, 6, PAL['0']);
+    if (!G.medallas.length) drawText(ctx, 'Ninguna todavía.', 8, 26, PAL['0']);
+    for (let i = 0; i < G.medallas.length; i++) drawText(ctx, '* ' + G.medallas[i], 10, 26 + i * 14, PAL['0']);
+    drawText(ctx, 'Bichos vistos: ' + Object.keys(G.vistos).length + '/' + Object.keys(BICHOS).length, 8, 96, PAL['0']);
+    drawText(ctx, 'Pasos: ' + G.pasos, 8, 108, PAL['0']);
+    drawText(ctx, 'Guita: $' + G.guita, 8, 120, PAL['0']);
+    return;
+  }
+  if (p === 'tienda' || p === 'aviso2') {
+    rect(0, 0, W, H, PAL['4']); panel(0, 0, W, H);
+    drawText(ctx, 'KIOSCO DE RAMON', 8, 5, PAL['0']);
+    drawText(ctx, '$' + G.guita, 118, 5, PAL['0']);
+    for (let i = 0; i < MN.stock.length; i++) {
+      const it = OBJETOS[MN.stock[i]];
+      drawText(ctx, it.n, 14, 20 + i * 12, PAL['0']);
+      drawText(ctx, '$' + it.precio, 116, 20 + i * 12, PAL['0']);
+      if (MN.sel2 === i) drawText(ctx, '>', 4, 20 + i * 12, PAL['0']);
+    }
+    drawText(ctx, 'CHAU', 14, 20 + MN.stock.length * 12, PAL['0']);
+    if (MN.sel2 >= MN.stock.length) drawText(ctx, '>', 4, 20 + MN.stock.length * 12, PAL['0']);
+    if (p === 'aviso2') { panel(0, 96, 160, 48); const ls = MN.txt.split('\n'); for (let i = 0; i < ls.length; i++) drawText(ctx, ls[i], 8, 104 + i * 11, PAL['0']); }
+    else {
+      panel(0, 108, 160, 36);
+      const it = OBJETOS[MN.stock[Math.min(MN.sel2, MN.stock.length - 1)]];
+      const d = wrapText(MN.sel2 >= MN.stock.length ? 'Nos vemos, pibe.' : it.d, 144);
+      for (let i = 0; i < Math.min(2, d.length); i++) drawText(ctx, d[i], 8, 114 + i * 11, PAL['0']);
+    }
+    return;
+  }
+  if (p === 'aviso') {
+    dibujarMundo();
+    panel(0, 96, 160, 48);
+    const ls = MN.txt.split('\n');
+    for (let i = 0; i < ls.length; i++) drawText(ctx, ls[i], 8, 104 + i * 11, PAL['0']);
+  }
+}
+
+// ------------------------------------------------------------
+//  ESCENAS ESPECIALES
+// ------------------------------------------------------------
+function escenaChirola() {
+  if (!G.flags.starter) {
+    decir([
+      '¡Ahí está el pibe! Pasá, pasá.',
+      'Vos me conocés: Chirola, el de la\nferretería de Mitre y Belgrano.',
+      'Pero hace un tiempo que me dedico\na otra cosa.',
+      '¿Viste los bichos raros que andan\npor el baldío y la plaza?',
+      'Bueno. Los estudio. Alguien tiene\nque hacerlo, ¿no?',
+      'Necesito que me llenes esta libreta.\nAgarrá uno y salí a caminar.',
+      'Tengo tres. Elegí bien que después\nno hay cambio.'
+    ], () => {
+      preguntar('¿Cuál te llevás?', ['Chorimón', 'Yuyín', 'Riachín'], (s) => {
+        const id = ['chorimon', 'yuyin', 'riachin'][s];
+        const b = crearBicho(id, 5);
+        darBicho(b); G.vistos[id] = 1;
+        G.flags.starter = id;
+        darObjeto('chapita', 5);
+        Audio2.sfx('capturado');
+        decir([
+          '¡' + BICHOS[id].n + '! Buena elección, ese\nes de fierro.',
+          '*Te dieron un ' + BICHOS[id].n + '!*',
+          'Tomá cinco chapitas. Se las tirás al\nbicho cuando esté cansado y listo.',
+          'Cuantas más chapitas, más chances.\nY el bicho tiene que estar flojo, eh.',
+          'Ah, el Bocha ya se llevó el suyo.\nEse pibe no para.',
+          'Andá a la plaza, después al baldío.\nY tenés que juntar tres medallas.',
+          'Con las tres, el Colectivero de la\nterminal te va a recibir.'
+        ]);
+      });
+    });
+    return;
+  }
+  if (G.medallas.length >= 3 && !G.flags.chirolaFinal) {
+    G.flags.chirolaFinal = 1;
+    darObjeto('tuper', 3); darObjeto('fernet', 2);
+    decir(['¡Tres medallas! ¿Y ese pibe flaco\nque no sabía atarse los cordones?',
+      'Tomá, para el viaje: tres tupers y\ndos fernets.',
+      '*Recibiste 3 Tupers y 2 Fernets!*',
+      'Andá a la terminal. Y ojo con el\nColectivero, ese vio cosas.']);
+    return;
+  }
+  const consejos = [
+    'Los bichos de tipo GRASA le ganan\na los de YUYO. Anotá.',
+    'Si el bicho está flojito de vida,\nla chapita agarra mucho mejor.',
+    'Con el TUFO encima pierden vida\nsolos. Barato y efectivo.',
+    'Cuando suben de nivel a veces se\ntransforman. Es normal. Creo.',
+    'Ramón te cura los bichos gratis.\nAprovechá que después cobra.'
+  ];
+  decir(['¿Cómo va esa libreta?', consejos[rnd(consejos.length)]]);
+}
+
+function escenaKiosco() {
+  preguntar(['¿Qué hacés, pibe? ¿Todo bien?'], ['Curar', 'Comprar', 'Nada'], (s) => {
+    if (s === 0) {
+      decir(['Dale, dejámelos un ratito.'], () => {
+        curarTodo(); Audio2.sfx('curar');
+        decir(['Listo. Como nuevos.',
+          '"Y comé algo vos también, eh."']);
+      });
+    } else if (s === 1) {
+      MN = { p: 'tienda', sel: 0, sel2: 0, stock: ['chapita', 'chapitona', 'tuper', 'sanguche', 'milanga', 'soda', 'bizcochito'] };
+      modo = 'menu';
+    } else decir(['Cuando quieras, pibe.']);
+  });
+}
+
+// ------------------------------------------------------------
+//  FINAL
+// ------------------------------------------------------------
+let FIN = { y: 0 };
+const CREDITOS = [
+  '', '', '', '',
+  'FIN', '', '',
+  'Ganaste el pase libre del 22.', '',
+  'Volviste caminando igual,', 'porque el 22 no pasaba.', '', '',
+  'Bichos atrapados y vistos:', '', '', '',
+  'GRACIAS POR JUGAR', '',
+  'Un homenaje trucho a los', 'juegos de bichos de los 90', '',
+  'y a Avellaneda, que', 'aguanta todo.', '', '',
+  'Hecho en el conurbano.', '', '', '',
+  'Apreta A para volver', 'al barrio.', ''
+];
+function finalDelJuego() {
+  G.flags.termino = 1;
+  FIN.y = 0; modo = 'fin';
+  Audio2.play('victoria');
+}
+function updFin() {
+  FIN.y += 0.35;
+  if (KP.a && FIN.y > 40) { modo = 'mundo'; Audio2.play('barrio'); }
+}
+function dibujarFin() {
+  rect(0, 0, W, H, PAL['0']);
+  for (let i = 0; i < CREDITOS.length; i++) {
+    const y = 144 + i * 12 - FIN.y;
+    if (y < -12 || y > 150) continue;
+    const t = CREDITOS[i];
+    drawText(ctx, t, (W - textWidth(t)) / 2, y, PAL['5']);
+  }
+  if (FIN.y > 12 * 15) {
+    const t = Object.keys(G.vistos).length + ' de ' + Object.keys(BICHOS).length;
+    drawText(ctx, t, (W - textWidth(t)) / 2, 144 + 15 * 12 - FIN.y, PAL['i']);
+  }
+}
+
+===== ARCHIVO: src/80_main.js =====
+// ============================================================
+//  TITULO, BUCLE PRINCIPAL Y GUARDADO
+// ============================================================
+function drawTextBig(s, x, y, color, sc) {
+  const w = textWidth(s) + 2, tmp = document.createElement('canvas');
+  tmp.width = w; tmp.height = 9;
+  const c = tmp.getContext('2d');
+  const a = glyphAtlas(color);
+  let cx = 0;
+  for (const ch of s) {
+    const g = GLYPHS[ch] || GLYPHS['?'];
+    const p = a.pos[ch] !== undefined ? a.pos[ch] : a.pos['?'];
+    c.drawImage(a.cv, p, 0, 8, 8, cx, 0, 8, 8);
+    cx += g.w + 1;
+  }
+  blit(tmp, x, y, sc);
+}
+function centrar(s, sc) { return (W - (textWidth(s) * (sc || 1))) / 2; }
+
+const NOMBRES = ['Pibe', 'Brian', 'Kevin', 'Nahuel', 'Jazmín', 'Rocío', 'Maxi'];
+let TIT = { sel: 0, t: 0, p: 'menu', nsel: 0, hay: false };
+
+function updTitulo() {
+  TIT.t++;
+  if (TIT.p === 'menu') {
+    const ops = TIT.hay ? 2 : 1;
+    if (KP.up || KP.dn) { TIT.sel = (TIT.sel + 1) % ops; Audio2.sfx('bip'); }
+    if (KP.a || KP.st) {
+      Audio2.unlock(); Audio2.sfx('sel');
+      if (TIT.hay && TIT.sel === 0) {
+        const s = loadGame();
+        if (s) {
+          G = s;
+          G.flags = G.flags || {}; G.vistos = G.vistos || {}; G.objetos = G.objetos || {};
+          modo = 'mundo'; Audio2.play('barrio');
+          irAMapa(G.mapa, G.x, G.y, G.dir);
+          mostrarCartel(MAPAS[G.mapa].nom);
+          return;
+        }
+      }
+      TIT.p = 'nombre'; TIT.nsel = 0;
+    }
+    return;
+  }
+  if (TIT.p === 'nombre') {
+    if (KP.up) { TIT.nsel = (TIT.nsel + NOMBRES.length - 1) % NOMBRES.length; Audio2.sfx('bip'); }
+    if (KP.dn) { TIT.nsel = (TIT.nsel + 1) % NOMBRES.length; Audio2.sfx('bip'); }
+    if (KP.b) { TIT.p = 'menu'; Audio2.sfx('sel'); return; }
+    if (KP.a) {
+      Audio2.sfx('sel');
+      nuevaPartida(NOMBRES[TIT.nsel]);
+      modo = 'mundo'; Audio2.play('barrio');
+      irAMapa('casa', 5, 5, 'd');
+      decir([
+        'AVELLANEDA, 1996.',
+        'Tres de la tarde. Hace calor.\nLa tele está prendida sin que nadie mire.',
+        'Vos sos ' + G.nombre + ' y hoy, por fin,\nte vas a hacer conocer en el barrio.',
+        '(Movete con las flechas.\nA = hablar. START = menú.)'
+      ]);
+    }
+    return;
+  }
+}
+function dibujarTitulo() {
+  // cielo del conurbano al atardecer
+  for (let i = 0; i < 9; i++) rect(0, i * 8, W, 8, [PAL['l'], PAL['l'], PAL['f'], PAL['g'], PAL['h'], PAL['h'], PAL['i'], PAL['i'], PAL['h']][i]);
+  // siluetas
+  const sil = [[0, 96, 22, 48], [20, 84, 14, 60], [32, 100, 26, 44], [56, 78, 18, 66],
+  [72, 92, 30, 52], [100, 82, 16, 62], [114, 98, 24, 46], [136, 88, 24, 56]];
+  for (const s of sil) {
+    rect(s[0], s[1], s[2], s[3], PAL['1']);
+    for (let y = s[1] + 4; y < 144; y += 8) for (let x = s[0] + 3; x < s[0] + s[2] - 2; x += 6)
+      if ((x * 7 + y * 3) % 5 < 2) rect(x, y, 2, 3, PAL['i']);
+  }
+  rect(0, 126, W, 18, PAL['0']);
+  drawTextBig('POKESAN', centrar('POKESAN', 2), 14, PAL['s'], 2);
+  drawText(ctx, 'AVELLANEDA 96', centrar('AVELLANEDA 96'), 34, PAL['0']);
+  blit(spriteMon('chorimon'), 10, 52, 1.4);
+  blit(spriteMon('bondimon'), 108, 48, 1.4);
+  if (TIT.p === 'menu') {
+    const ops = TIT.hay ? ['SEGUIR', 'DE CERO'] : ['ARRANCAR'];
+    panel(46, 92, 68, ops.length * 12 + 10);
+    for (let i = 0; i < ops.length; i++) {
+      drawText(ctx, ops[i], 62, 97 + i * 12, PAL['0']);
+      if (TIT.sel === i) drawText(ctx, '>', 52, 97 + i * 12, PAL['0']);
+    }
+    if ((TIT.t >> 4) & 1) drawText(ctx, 'A / START', centrar('A / START'), 131, PAL['5']);
+  } else {
+    panel(38, 46, 84, 94);
+    drawText(ctx, '¿Cómo te llamás?', 44, 50, PAL['0']);
+    for (let i = 0; i < NOMBRES.length; i++) {
+      drawText(ctx, NOMBRES[i], 58, 62 + i * 11, PAL['0']);
+      if (TIT.nsel === i) drawText(ctx, '>', 48, 62 + i * 11, PAL['0']);
+    }
+  }
+}
+
+// ------------------------------------------------------------
+//  BUCLE
+// ------------------------------------------------------------
+const _irAMapa = irAMapa;
+irAMapa = function (nom, x, y, dir) {
+  const cambio = !G || G.mapa !== nom;
+  _irAMapa(nom, x, y, dir);
+  if (cambio && MAPAS[nom].nom) mostrarCartel(MAPAS[nom].nom);
+};
+
+let acumulado = 0, ultimo = 0;
+function paso(dibujar) {
+  if (dibujar === undefined) dibujar = true;
+  // guardado de posicion
+  if (G && modo === 'mundo') { G.x = P.x; G.y = P.y; G.dir = P.dir; }
+
+  if (fade.dir === 1) {
+    fade.v += 0.09;
+    if (fade.v >= 1) { fade.v = 1; fade.dir = -1; const c = fade.cb; fade.cb = null; c && c(); }
+  } else if (fade.dir === -1) {
+    fade.v -= 0.09;
+    if (fade.v <= 0) { fade.v = 0; fade.dir = 0; }
+  } else {
+    if (modo === 'titulo') updTitulo();
+    else if (modo === 'mundo') updMundo();
+    else if (modo === 'dialogo') updDlg();
+    else if (modo === 'menu') updMenu();
+    else if (modo === 'batalla') updBatalla();
+    else if (modo === 'fin') updFin();
+  }
+  if (G) G.seg += 1 / 60;
+
+  // ---- dibujo ----
+  if (!dibujar) { clearPressed(); return; }
+  if (modo === 'titulo') dibujarTitulo();
+  else if (modo === 'batalla') dibujarBatalla();
+  else if (modo === 'fin') dibujarFin();
+  else if (modo === 'menu' && MN && MN.p !== 'aviso') dibujarMenu();
+  else {
+    camaraSeguir();
+    dibujarMundo();
+    dibujarCartel();
+    if (modo === 'dialogo' && dlg) dibujarDlg();
+    if (modo === 'menu' && MN) dibujarMenu();
+  }
+  if (fade.v > 0) { ctx.fillStyle = 'rgba(8,8,14,' + fade.v + ')'; ctx.fillRect(0, 0, W, H); }
+  clearPressed();
+}
+
+function bucle(t) {
+  requestAnimationFrame(bucle);
+  if (!ultimo) ultimo = t;
+  let dt = t - ultimo; ultimo = t;
+  if (dt > 250) dt = 250;
+  acumulado += dt;
+  let n = 0;
+  while (acumulado >= 16.666 && n < 4) { acumulado -= 16.666; n++; paso(acumulado < 16.666 || n >= 4); }
+}
+
+// arranque
+TIT.hay = !!loadGame();
+resize();
+requestAnimationFrame(bucle);
+
+===== ARCHIVO: src/99_tail.html =====
+</body>
+</html>
+
+===== ARCHIVO: test/driver.js =====
+const { chromium } = require('playwright');
+const path = require('path');
+(async () => {
+  const b = await chromium.launch();
+  const p = await b.newPage({ viewport: { width: 420, height: 900 } });
+  const errs = [];
+  p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message));
+  p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE: ' + m.text()); });
+  await p.goto('file://' + path.resolve('Pokesan.html'));
+  const shot = async n => { await p.waitForTimeout(350); await p.screenshot({ path: 'shots/' + n + '.png' }); };
+  const key = async (k, n) => { for (let i = 0; i < (n || 1); i++) { await p.keyboard.press(k); await p.waitForTimeout(120); } };
+  const hold = async (k, ms) => { await p.keyboard.down(k); await p.waitForTimeout(ms); await p.keyboard.up(k); await p.waitForTimeout(120); };
+
+  await shot('01_titulo');
+  await key('z');                    // arrancar
+  await shot('02_nombre');
+  await key('z');                    // elegir nombre
+  await shot('03_intro');
+  await key('z', 16);                 // pasar dialogo
+  await shot('04_casa');
+  await hold('ArrowDown', 1200);      // salir de la pieza
+  await shot('05_barrio');
+  await hold('ArrowUp', 400);
+  await hold('ArrowLeft', 700);
+  await shot('06_calle');
+
+
+  // batalla forzada
+  await p.evaluate(() => {
+    modo = 'mundo';
+    darBicho(crearBicho('chorimon', 9)); darBicho(crearBicho('yuyin', 8));
+    darObjeto('chapita', 5);
+    empezarBatalla({ tipo: 'salvaje', eq: [crearBicho('palomin', 8)] });
+  });
+  await shot('08_batalla_intro');
+  await key('z', 2);
+  await shot('09_batalla_menu');
+  await key('z');
+  await shot('10_ataques');
+  await key('z');
+  await p.waitForTimeout(500);
+  await shot('11_pelea');
+  await key('z', 6);
+  await shot('12_pelea2');
+
+  // menus
+  await p.evaluate(() => { if (modo === 'batalla') { B = null; modo = 'mundo'; } });
+  await key('Enter');
+  await shot('13_menu');
+  await key('z');
+  await shot('14_bichos');
+  await key('z');
+  await shot('15_ficha');
+  await key('x'); await key('x');
+  await key('ArrowDown'); await key('z');
+  await shot('16_bolso');
+
+  // grilla con todos los bichos para revisar el arte
+  await p.evaluate(() => {
+    paso = function(){};
+    rect(0, 0, W, H, PAL['4']);
+    const ids = Object.keys(BICHOS);
+    ids.forEach((id, i) => { blit(spriteMon(id), (i % 5) * 32, ((i / 5) | 0) * 48, 1.3); });
+  });
+  await p.screenshot({ path: 'shots/07_bichos.png' });
+  console.log(errs.length ? errs.join('\n') : 'sin errores de js');
+  await b.close();
+})();
+
+===== ARCHIVO: test/flujo.js =====
+const { chromium } = require('playwright');
+const path = require('path');
+(async () => {
+  const b = await chromium.launch();
+  const p = await b.newPage({ viewport: { width: 420, height: 900 } });
+  const errs = [];
+  p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message));
+  await p.goto('file://' + path.resolve('Pokesan.html'));
+  const key = async (k, n, w) => { for (let i = 0; i < (n || 1); i++) { await p.keyboard.press(k); await p.waitForTimeout(w || 90); } };
+  const autoJugar = (max) => p.evaluate((max) => {
+    let n = 0;
+    while (n < max) {
+      if (modo !== 'batalla' && modo !== 'dialogo' && fade.dir === 0 && n > 4) break;
+      KP.a = 1; K.a = 1; paso(); K.a = 0; n++;
+    }
+    return { pasos: n, modo, med: G.medallas.length, guita: G.guita, eq: G.equipo.map(b => b.mote + ' ' + b.hp) };
+  }, max);
+  const st = () => p.evaluate(() => ({ modo, mapa: G && G.mapa, eq: G && G.equipo.map(b => b.mote + ' N' + b.lvl + ' ' + b.hp + '/' + b.hpMax), med: G && G.medallas, guita: G && G.guita, fase: B && B.fase }));
+  const log = async (t) => console.log(t, JSON.stringify(await st()));
+
+  // arrancar partida
+  await key('z', 2, 200);
+  await key('z', 20);
+  await log('1 casa   ');
+
+  // ir al taller y agarrar bicho
+  await p.evaluate(() => { irAMapa('taller', 4, 3, 'u'); });
+  await key('z', 30);                      // dialogo de chirola
+  await p.evaluate(() => { });
+  await log('2 eleccion');
+  await key('z', 1);                       // elegir Chorimon
+  await key('z', 24);
+  await log('3 starter');
+
+  // batalla salvaje en la plaza
+  await p.evaluate(() => { G.equipo[0].lvl = 12; G.equipo[0].hpMax = statHP(BICHOS[G.equipo[0].id].b[0], 12); G.equipo[0].hp = G.equipo[0].hpMax; irAMapa('plaza', 2, 4, 'u'); });
+  let intentos = 0;
+  while (intentos++ < 40) {
+    await p.keyboard.down('ArrowUp'); await p.waitForTimeout(320); await p.keyboard.up('ArrowUp');
+    await p.keyboard.down('ArrowDown'); await p.waitForTimeout(320); await p.keyboard.up('ArrowDown');
+    const s = await st(); if (s.modo === 'batalla') break;
+  }
+  await log('4 salvaje');
+  await p.screenshot({ path: 'shots/f1_salvaje.png' });
+  // tirar chapita
+  await key('ArrowDown', 1); await key('ArrowRight', 1); await key('z', 1);  // BOLSO
+  await key('z', 10);
+  await log('5 chapita');
+  // si sigue la batalla, pelear hasta terminar
+  console.log('   salvaje auto:', JSON.stringify(await autoJugar(20000)));
+  await log('6 fin batalla');
+
+  // gimnasio: doña rosa
+  await p.evaluate(() => {
+    G.equipo.length = 0;
+    darBicho(crearBicho('chorizon', 40)); darBicho(crearBicho('riachonzo', 40)); darBicho(crearBicho('bondimon', 40));
+    irAMapa('plaza', 12, 5, 'r');
+  });
+  await key('z', 14);
+  await log('7 pre-gym');
+  await p.screenshot({ path: 'shots/f2_gym.png' });
+  console.log('   gym auto:', JSON.stringify(await autoJugar(20000)));
+  await key('z', 16);
+  await log('8 post-gym');
+
+  // el kiosco
+  await p.evaluate(() => { irAMapa('kiosco', 2, 4, 'u'); });
+  await key('z', 4);
+  await key('ArrowDown', 1); await key('z', 1);
+  await p.screenshot({ path: 'shots/f3_tienda.png' });
+  await log('9 tienda ');
+  await key('z', 2); await key('x', 2);
+
+  // jefe final
+  await p.evaluate(() => { irAMapa('terminal', 9, 6, 'u'); G.medallas = ['a', 'b', 'c']; });
+  await key('z', 14);
+  await log('10 pre-final');
+  console.log('   final auto:', JSON.stringify(await autoJugar(60000)));
+  await key('z', 20);
+  await log('11 final');
+  console.log('debug B:', JSON.stringify(await p.evaluate(() => B ? { fase: B.fase, msg: B.msg, q: B.q.length, ene: BICHOS[ene().id].n + ' ' + ene().hp, ei: B.ei, mio: yo().mote + ' ' + yo().hp } : 'sin batalla')));
+  await p.screenshot({ path: 'shots/f4_final.png' });
+  console.log(errs.length ? errs.join('\n') : 'sin errores de js');
+  await b.close();
+})();
+
+===== ARCHIVO: test/stress.js =====
+const { chromium } = require('playwright');
+const path = require('path');
+(async () => {
+  const b = await chromium.launch();
+  const p = await b.newPage({ viewport: { width: 420, height: 900 } });
+  const errs = [];
+  p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message));
+  await p.goto('file://' + path.resolve('Pokesan.html'));
+
+  // ---- captura ----
+  console.log('captura:', JSON.stringify(await p.evaluate(() => {
+    nuevaPartida('Test'); modo = 'mundo'; irAMapa('plaza', 2, 4, 'd');
+    darBicho(crearBicho('chorizon', 30)); darObjeto('tuper', 40);
+    empezarBatalla({ tipo: 'salvaje', eq: [crearBicho('palomin', 5)] });
+    let n = 0;
+    while (modo === 'batalla' && n < 8000) {
+      // A siempre; en el menu principal ir al BOLSO y tirar chapita
+      if (B && B.fase === 'menu') { B.sel = 2; }
+      if (B && B.fase === 'bolso') { B.sel = B.lista.indexOf('tuper'); }
+      KP.a = 1; K.a = 1; paso(); K.a = 0; n++;
+    }
+    return { pasos: n, modo, equipo: G.equipo.length, ultimo: G.equipo[G.equipo.length - 1].mote };
+  })));
+
+  // ---- derrota (te desmayas) ----
+  console.log('derrota:', JSON.stringify(await p.evaluate(() => {
+    nuevaPartida('Test'); modo = 'mundo'; irAMapa('baldio', 5, 5, 'd');
+    G.guita = 800;
+    darBicho(crearBicho('yuyin', 3)); G.equipo[0].hp = 1;
+    empezarBatalla({ tipo: 'salvaje', eq: [crearBicho('bondimon', 40)] });
+    let n = 0;
+    while (n < 8000) { if (modo === 'mundo' && fade.dir === 0 && !B && n > 30) break; KP.a = 1; K.a = 1; paso(); K.a = 0; n++; }
+    return { pasos: n, modo, mapa: G.mapa, guita: G.guita, hp: G.equipo[0].hp };
+  })));
+
+  // ---- fuzz: teclas al azar por todo el juego ----
+  console.log('fuzz:', JSON.stringify(await p.evaluate(() => {
+    nuevaPartida('Test'); modo = 'mundo'; irAMapa('barrio', 10, 9, 'd');
+    darBicho(crearBicho('chorimon', 14)); darBicho(crearBicho('riachin', 12));
+    darObjeto('chapita', 30); darObjeto('sanguche', 20); darObjeto('bizcochito', 5);
+    const ks = ['up', 'dn', 'lf', 'rt', 'a', 'b', 'st'];
+    const vistos = {};
+    for (let i = 0; i < 120000; i++) {
+      const k = ks[(Math.random() * ks.length) | 0];
+      if (Math.random() < 0.5) { KP[k] = 1; K[k] = 1; }
+      paso();
+      for (const kk of ks) K[kk] = 0;
+      vistos[modo] = (vistos[modo] || 0) + 1;
+      if (G.flags.termino) break;
+    }
+    return { modos: vistos, mapa: G.mapa, medallas: G.medallas.length, equipo: G.equipo.length, pasos: G.pasos, guita: G.guita };
+  })));
+
+  console.log(errs.length ? errs.join('\n') : 'sin errores de js');
+  await b.close();
+})();
+
+===== ARCHIVO: test/mapas.js =====
+const { chromium } = require('playwright');
+const path = require('path');
+(async () => {
+  const b = await chromium.launch();
+  const p = await b.newPage({ viewport: { width: 420, height: 900 } });
+  const errs = []; p.on('pageerror', e => errs.push(e.message));
+  await p.goto('file://' + path.resolve('Pokesan.html'));
+  const lugares = [['plaza', 9, 8], ['cancha', 9, 8], ['baldio', 9, 8], ['riachuelo', 8, 6], ['terminal', 9, 7], ['kiosco', 2, 5], ['taller', 4, 4]];
+  for (const [m, x, y] of lugares) {
+    await p.evaluate(([m, x, y]) => {
+      if (!G) { nuevaPartida('Test'); }
+      modo = 'mundo'; dlg = null; MN = null; B = null; fade.v = 0; fade.dir = 0;
+      irAMapa(m, x, y, 'd'); cartelNom = 0;
+      camaraSeguir(); dibujarMundo();
+    }, [m, x, y]);
+    await p.waitForTimeout(200);
+    await p.screenshot({ path: 'shots/m_' + m + '.png', clip: { x: 10, y: 262, width: 400, height: 360 } });
+  }
+  console.log(errs.length ? errs.join('\n') : 'mapas ok');
+  await b.close();
+})();
+
