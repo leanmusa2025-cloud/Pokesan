@@ -1,0 +1,2513 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#07070c">
+<meta name="mobile-web-app-capable" content="yes">
+<title>No sale el sol — Avellaneda 2026</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:#05050a;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#5a5a70;touch-action:none;user-select:none;-webkit-user-select:none}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:4px}
+#screen{flex:0 0 auto;display:block;background:#000;image-rendering:pixelated;image-rendering:crisp-edges;border:3px solid #16161f;border-radius:6px;box-shadow:0 0 0 2px #000,0 6px 22px rgba(0,0,0,.8)}
+#pad{flex:0 0 auto;width:100%;max-width:460px;display:none;justify-content:space-between;align-items:center;padding:0 10px 4px;gap:8px}
+.dpad{position:relative;width:132px;height:132px;flex:0 0 auto}
+.dpad b{position:absolute;background:#1d1d28;border:2px solid #0b0b12;border-radius:8px;display:block}
+.dpad b:active,.dpad b.on{background:#3a3a50}
+.up{left:44px;top:0;width:44px;height:48px}
+.dn{left:44px;bottom:0;width:44px;height:48px}
+.lf{left:0;top:44px;width:48px;height:44px}
+.rt{right:0;top:44px;width:48px;height:44px}
+.mid{left:44px;top:44px;width:44px;height:44px;border-radius:2px}
+.abs{display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+.row2{display:flex;gap:14px;align-items:center}
+.btn{width:60px;height:60px;border-radius:50%;background:#6b1f33;border:2px solid #0b0b12;color:#e8e8f5;font:700 20px/58px system-ui;text-align:center}
+.btn.b{background:#1f3a6b}
+.btn:active,.btn.on{filter:brightness(1.6)}
+.mini{display:flex;gap:10px}
+.sbtn{padding:5px 14px;border-radius:12px;background:#1d1d28;border:2px solid #0b0b12;color:#7a7a92;font:600 11px/1 system-ui;letter-spacing:.5px}
+.sbtn:active{background:#3a3a50}
+#hint{font-size:11px;letter-spacing:.4px;text-align:center;opacity:.5;padding:0 8px}
+@media (pointer:coarse){#hint{display:none}}
+</style>
+</head>
+<body>
+<div id="app">
+<canvas id="screen" width="160" height="144"></canvas>
+<div id="pad">
+  <div class="dpad">
+    <b class="up" data-k="ArrowUp"></b><b class="lf" data-k="ArrowLeft"></b>
+    <b class="mid"></b>
+    <b class="rt" data-k="ArrowRight"></b><b class="dn" data-k="ArrowDown"></b>
+  </div>
+  <div class="abs">
+    <div class="row2"><b class="btn b" data-k="KeyX">B</b><b class="btn" data-k="KeyZ">A</b></div>
+    <div class="mini"><b class="sbtn" data-k="Enter">LIBRETA</b><b class="sbtn" data-k="KeyM">SON</b></div>
+  </div>
+</div>
+<div id="hint">Flechas = mover &nbsp;·&nbsp; Z = A &nbsp;·&nbsp; X = B &nbsp;·&nbsp; Enter = LIBRETA &nbsp;·&nbsp; M = musica</div>
+</div>
+<script>
+/* ---- src2/10_font.js ---- */
+// ============================================================
+//  FUENTE  5x7 - formato: [caracter][fila_inicial][filas/separadas/por/barra]
+// ============================================================
+const FONT_SRC = `
+ 0
+A0.###./#...#/#...#/#####/#...#/#...#
+B0####./#...#/####./#...#/#...#/####.
+C0.###./#...#/#..../#..../#...#/.###.
+D0####./#...#/#...#/#...#/#...#/####.
+E0#####/#..../####./#..../#..../#####
+F0#####/#..../####./#..../#..../#....
+G0.###./#..../#..##/#...#/#...#/.###.
+H0#...#/#...#/#####/#...#/#...#/#...#
+I0.###./..#../..#../..#../..#../.###.
+J0..###/...#./...#./...#./#..#./.##..
+K0#...#/#..#./###../###../#..#./#...#
+L0#..../#..../#..../#..../#..../#####
+M0#...#/##.##/#.#.#/#...#/#...#/#...#
+N0#...#/##..#/#.#.#/#..##/#...#/#...#
+O0.###./#...#/#...#/#...#/#...#/.###.
+P0####./#...#/#...#/####./#..../#....
+Q0.###./#...#/#...#/#.#.#/#..#./.##.#
+R0####./#...#/#...#/####./#..#./#...#
+S0.####/#..../.###./....#/....#/####.
+T0#####/..#../..#../..#../..#../..#..
+U0#...#/#...#/#...#/#...#/#...#/.###.
+V0#...#/#...#/#...#/#...#/.#.#./..#..
+W0#...#/#...#/#...#/#.#.#/##.##/#...#
+X0#...#/#...#/.#.#./.#.#./#...#/#...#
+Y0#...#/#...#/.#.#./..#../..#../..#..
+Z0#####/....#/...#./..#../.#.../#####
+Ñ0.###./#...#/##..#/#.#.#/#..##/#...#
+a1.###./....#/.####/#...#/.####
+b0#..../#..../####./#...#/#...#/####.
+c1.###./#..../#..../#..../.###.
+d0....#/....#/.####/#...#/#...#/.####
+e1.###./#...#/#####/#..../.###.
+f0..##./.#.../####./.#.../.#.../.#...
+g1.####/#...#/#...#/.####/....#/####.
+h0#..../#..../####./#...#/#...#/#...#
+i0..#../...../..#../..#../..#../..#..
+j0...#./...../...#./...#./...#./#..#./.##..
+k0#..../#..#./#.#../##.../#.#../#..#.
+l0.##../..#../..#../..#../..#../.###.
+m1#####/#.#.#/#.#.#/#.#.#/#.#.#
+n1####./#...#/#...#/#...#/#...#
+o1.###./#...#/#...#/#...#/.###.
+p1####./#...#/#...#/####./#..../#....
+q1.####/#...#/#...#/.####/....#/....#
+r1#.##./##.../#..../#..../#....
+s1.####/#..../.###./....#/####.
+t0.#.../.#.../####./.#.../.#.../..##.
+u1#...#/#...#/#...#/#...#/.####
+v1#...#/#...#/#...#/.#.#./..#..
+w1#...#/#...#/#.#.#/#.#.#/.#.#.
+x1#...#/.#.#./..#../.#.#./#...#
+y1#...#/#...#/#...#/.####/....#/####.
+z1#####/...#./..#../.#.../#####
+ñ0.###./####./#...#/#...#/#...#/#...#
+á0...#./.###./....#/.####/#...#/.####
+é0...#./.###./#...#/#####/#..../.###.
+í0...#./...../..#../..#../..#../..#..
+ó0...#./.###./#...#/#...#/#...#/.###.
+ú0...#./#...#/#...#/#...#/#...#/.####
+ü0.#.#./#...#/#...#/#...#/#...#/.####
+00.###./#..##/#.#.#/##..#/#...#/.###.
+10..#../.##../..#../..#../..#../.###.
+20.###./#...#/...#./..#../.#.../#####
+30####./....#/.###./....#/....#/####.
+40...#./..##./.#.#./#..#./#####/...#.
+50#####/#..../####./....#/#...#/.###.
+60..##./.#.../####./#...#/#...#/.###.
+70#####/....#/...#./..#../.#.../.#...
+80.###./#...#/.###./#...#/#...#/.###.
+90.###./#...#/#...#/.####/...#./.##..
+.5..#..
+,5..#../.#...
+!0..#../..#../..#../..#../...../..#..
+?0.###./#...#/...#./..#../...../..#..
+¿0..#../...../..#../.#.../#...#/.###.
+¡0..#../...../..#../..#../..#../..#..
+'0..#../..#..
+"0.#.#./.#.#.
+-3.###.
+:2..#../...../..#..
+;2..#../...../..#../.#...
+(0...#./..#../.#.../.#.../..#../...#.
+)0.#.../..#../...#./...#./..#../.#...
+/0....#/...#./..#../..#../.#.../#....
+$0..#../.####/#.#../.###./..#.#/####./..#..
+%1##..#/##.#./..#../.#.##/#..##
++2..#../#####/..#..
+=2#####/...../#####
+*1#.#.#/.###./#.#.#
+°0.##../#..#./.##..
+_6#####
+&0.##../#..#./.##../#.#.#/#..#./.##.#
+#1.#.#./#####/.#.#./#####/.#.#.
+>1#..../.#.../..#../.#.../#....
+<1....#/...#./..#../...#./....#
+`;
+
+const GLYPHS = {};
+(function parseFont(){
+  for (const line of FONT_SRC.split('\n')) {
+    if (!line.length) continue;
+    const ch = line[0], top = +line[1];
+    if (isNaN(top)) continue;
+    const rows = line.slice(2).split('/');
+    const pix = []; let w = 0;
+    for (let y = 0; y < rows.length; y++) {
+      for (let x = 0; x < rows[y].length; x++) {
+        if (rows[y][x] === '#') { pix.push([x, top + y]); if (x + 1 > w) w = x + 1; }
+      }
+    }
+    GLYPHS[ch] = { w: w || 3, pix };
+  }
+})();
+
+const FONT_H = 9;                 // alto de linea
+const _atlas = {};                // cache de atlas por color
+
+function glyphAtlas(color) {
+  if (_atlas[color]) return _atlas[color];
+  const keys = Object.keys(GLYPHS);
+  const cv = document.createElement('canvas');
+  cv.width = keys.length * 8; cv.height = 8;
+  const c = cv.getContext('2d');
+  c.fillStyle = color;
+  const pos = {};
+  keys.forEach((k, i) => {
+    pos[k] = i * 8;
+    for (const [x, y] of GLYPHS[k].pix) c.fillRect(i * 8 + x, y, 1, 1);
+  });
+  return (_atlas[color] = { cv, pos });
+}
+
+function textWidth(s) {
+  let w = 0;
+  for (const ch of s) { const g = GLYPHS[ch] || GLYPHS['?']; w += g.w + 1; }
+  return w > 0 ? w - 1 : 0;
+}
+
+// dibuja texto pixel-perfect
+function drawText(c, s, x, y, color) {
+  const a = glyphAtlas(color || '#101018');
+  let cx = x | 0;
+  for (const ch of s) {
+    const g = GLYPHS[ch] || GLYPHS['?'];
+    const p = a.pos[ch] !== undefined ? a.pos[ch] : a.pos['?'];
+    c.drawImage(a.cv, p, 0, 8, 8, cx, y | 0, 8, 8);
+    cx += g.w + 1;
+  }
+  return cx;
+}
+
+// parte un texto en lineas que entren en `maxw` pixeles
+function wrapText(s, maxw) {
+  const out = [];
+  for (const para of String(s).split('\n')) {
+    let line = '';
+    for (const word of para.split(' ')) {
+      const t = line ? line + ' ' + word : word;
+      if (textWidth(t) > maxw && line) { out.push(line); line = word; }
+      else line = t;
+    }
+    out.push(line);
+  }
+  return out;
+}
+/* ---- src2/15_core.js ---- */
+// ============================================================
+//  NUCLEO: pantalla, paletas (noche / 2010), sprites, input, audio
+// ============================================================
+const W = 160, H = 144;
+const cv = document.getElementById('screen');
+const ctx = cv.getContext('2d', { alpha: false });
+ctx.imageSmoothingEnabled = false;
+
+// la ciudad de noche, hace un mes que no sale el sol
+const PAL_NOCHE = {
+  '0': '#05050a', '1': '#101018', '2': '#1c1c2a', '3': '#2e2e44', '4': '#4a4a68', '5': '#7a7a98',
+  '6': '#2a1c14', '7': '#452c1c', '8': '#654428', '9': '#14261a', 'a': '#22422a', 'b': '#3a6440',
+  'c': '#0c1a34', 'd': '#1a3660', 'e': '#3a5c8c', 'f': '#4a1414', 'g': '#8a2a22', 'h': '#a86a20',
+  'i': '#d8b040', 'j': '#8a6a52', 'k': '#6a4a3a', 'l': '#3a1a34', 'm': '#6a3050', 'n': '#141410',
+  'o': '#2a2a20', 'p': '#44443a', 'q': '#5a5a4c', 'r': '#1a1a24', 's': '#9a9ab0'
+};
+// la quinta, verano de 2010, y la manana del final
+const PAL_DIA = {
+  '0': '#20202c', '1': '#3a3a4e', '2': '#5c5c78', '3': '#8a8aa4', '4': '#b8b8ca', '5': '#eeeef6',
+  '6': '#6c4426', '7': '#9c6a38', '8': '#d0a062', '9': '#3a7c40', 'a': '#5cb050', 'b': '#9cd868',
+  'c': '#2a4c90', 'd': '#4a90dc', 'e': '#a0d8f8', 'f': '#b02828', 'g': '#e85a44', 'h': '#f8b048',
+  'i': '#f8e468', 'j': '#f0c098', 'k': '#d09070', 'l': '#8a3a7a', 'm': '#d86aa8', 'n': '#3a3a28',
+  'o': '#6c6c50', 'p': '#a0a078', 'q': '#dcdcb4', 'r': '#4a4a5c', 's': '#ffffff'
+};
+let PAL = PAL_NOCHE, LUZ = 'noche';
+
+// colores de interfaz que acompanan la paleta
+const COL = {};
+function refrescarUI() {
+  const n = LUZ === 'noche';
+  COL.panel = n ? PAL['1'] : PAL['5'];
+  COL.borde = n ? PAL['4'] : PAL['0'];
+  COL.borde2 = n ? PAL['3'] : PAL['2'];
+  COL.texto = n ? PAL['s'] : PAL['0'];
+  COL.tenue = n ? PAL['4'] : PAL['2'];
+  COL.acento = PAL['i'];
+}
+
+function makeSprite(art, extra) {
+  const h = art.length, w = art[0].length;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const ch = art[y][x];
+    if (ch === '.' || ch === ' ') continue;
+    const col = (extra && extra[ch]) || PAL[ch];
+    if (!col) continue;
+    g.fillStyle = col; g.fillRect(x, y, 1, 1);
+  }
+  return c;
+}
+function padArt(rows) {
+  let w = 0; for (const r of rows) if (r.length > w) w = r.length;
+  return rows.map(r => r + '.'.repeat(w - r.length));
+}
+function mkArt(rows, colors) { return makeSprite(padArt(rows), colors); }
+
+// cambiar de luz reconstruye todo el arte cacheado
+const _cachesArte = [];
+function registrarCache(obj) { _cachesArte.push(obj); }
+function ponerLuz(modo) {
+  if (LUZ === modo) return;
+  LUZ = modo; PAL = modo === 'dia' ? PAL_DIA : PAL_NOCHE;
+  refrescarUI();
+  for (const c of _cachesArte) for (const k in c) delete c[k];
+  for (const k in _atlas) delete _atlas[k];
+  if (typeof reconstruirArte === 'function') reconstruirArte();
+}
+
+function blit(s, x, y, sc) {
+  sc = sc || 1;
+  ctx.drawImage(s, 0, 0, s.width, s.height, x | 0, y | 0, s.width * sc, s.height * sc);
+}
+function blitFlip(s, x, y, sc) {
+  sc = sc || 1;
+  ctx.save(); ctx.translate((x | 0) + s.width * sc, y | 0); ctx.scale(-1, 1);
+  ctx.drawImage(s, 0, 0, s.width, s.height, 0, 0, s.width * sc, s.height * sc);
+  ctx.restore();
+}
+function rect(x, y, w, h, col) { ctx.fillStyle = col; ctx.fillRect(x | 0, y | 0, w | 0, h | 0); }
+
+function panel(x, y, w, h) {
+  rect(x, y, w, h, COL.panel);
+  rect(x, y, w, 1, COL.borde); rect(x, y + h - 1, w, 1, COL.borde);
+  rect(x, y, 1, h, COL.borde); rect(x + w - 1, y, 1, h, COL.borde);
+  rect(x + 2, y + 2, w - 4, 1, COL.borde2); rect(x + 2, y + h - 3, w - 4, 1, COL.borde2);
+  rect(x + 2, y + 2, 1, h - 4, COL.borde2); rect(x + w - 3, y + 2, 1, h - 4, COL.borde2);
+}
+
+// ---- input ----
+const K = { up: 0, dn: 0, lf: 0, rt: 0, a: 0, b: 0, st: 0 };
+const KP = { up: 0, dn: 0, lf: 0, rt: 0, a: 0, b: 0, st: 0 };
+const MAPK = {
+  ArrowUp: 'up', KeyW: 'up', ArrowDown: 'dn', KeyS: 'dn', ArrowLeft: 'lf', KeyA: 'lf',
+  ArrowRight: 'rt', KeyD: 'rt', KeyZ: 'a', Space: 'a', KeyJ: 'a', KeyX: 'b', KeyK: 'b',
+  Backspace: 'b', Enter: 'st', Escape: 'st'
+};
+function setKey(name, v) { if (!name) return; if (v && !K[name]) KP[name] = 1; K[name] = v; }
+addEventListener('keydown', e => {
+  if (e.code === 'KeyM' && !e.repeat) { Audio2.toggle(); e.preventDefault(); return; }
+  const n = MAPK[e.code]; if (n) { if (!e.repeat) setKey(n, 1); e.preventDefault(); }
+});
+addEventListener('keyup', e => { const n = MAPK[e.code]; if (n) { setKey(n, 0); e.preventDefault(); } });
+function clearPressed() { for (const k in KP) KP[k] = 0; }
+
+(function touchPad() {
+  const pad = document.getElementById('pad');
+  const coarse = matchMedia('(pointer:coarse)').matches || 'ontouchstart' in window;
+  if (coarse) pad.style.display = 'flex';
+  const btns = [...pad.querySelectorAll('[data-k]')];
+  const zones = () => btns.map(b => ({ b, r: b.getBoundingClientRect(), k: MAPK[b.dataset.k], raw: b.dataset.k }));
+  let Z = zones(); addEventListener('resize', () => setTimeout(() => Z = zones(), 60));
+  const active = new Map();
+  function apply() {
+    const on = new Set([...active.values()].flat());
+    for (const z of Z) {
+      const hit = on.has(z.raw);
+      z.b.classList.toggle('on', hit);
+      if (z.raw === 'KeyM') { if (hit && !z._m) { z._m = 1; Audio2.toggle(); } if (!hit) z._m = 0; }
+      else setKey(z.k, hit ? 1 : 0);
+    }
+  }
+  function upd(e) {
+    e.preventDefault(); active.clear();
+    for (const t of e.touches) {
+      const hits = [];
+      for (const z of Z) {
+        const r = z.r, m = 6;
+        if (t.clientX >= r.left - m && t.clientX <= r.right + m && t.clientY >= r.top - m && t.clientY <= r.bottom + m) hits.push(z.raw);
+      }
+      if (hits.length) active.set(t.identifier, hits);
+    }
+    apply(); Audio2.unlock();
+  }
+  ['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach(ev => pad.addEventListener(ev, upd, { passive: false }));
+  addEventListener('pointerdown', () => Audio2.unlock());
+})();
+
+function resize() {
+  const pad = document.getElementById('pad');
+  const padH = pad.style.display === 'flex' ? 150 : 26;
+  const availW = innerWidth - 14, availH = innerHeight - padH - 16;
+  let s = Math.min(availW / W, availH / H);
+  if (s >= 1) s = Math.max(1, Math.floor(s * 2) / 2);
+  cv.style.width = Math.floor(W * s) + 'px';
+  cv.style.height = Math.floor(H * s) + 'px';
+}
+addEventListener('resize', resize); addEventListener('orientationchange', () => setTimeout(resize, 120));
+
+const rnd = n => Math.floor(Math.random() * n);
+const chance = p => Math.random() < p;
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+const SAVEKEY = 'nosaleelsol_avellaneda_2026';
+function saveGame(d) { try { localStorage.setItem(SAVEKEY, JSON.stringify(d)); return true; } catch (e) { return false; } }
+function loadGame() { try { return JSON.parse(localStorage.getItem(SAVEKEY) || 'null'); } catch (e) { return null; } }
+
+// ============================================================
+//  AUDIO
+// ============================================================
+const Audio2 = (function () {
+  let ac = null, master = null, on = true, timer = null, cur = null, step = 0, nextT = 0;
+  const N = {};
+  (function () {
+    const nm = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    for (let o = 1; o <= 7; o++) for (let i = 0; i < 12; i++)
+      N[nm[i] + o] = 440 * Math.pow(2, (i - 9 + (o - 4) * 12) / 12);
+  })();
+  const _ = null;
+  const SONGS = {
+    // caminar de noche: lento, feo, hermoso
+    noche: {
+      bpm: 92,
+      lead: ['A4', _, _, _, 'C5', _, _, _, 'B4', _, _, _, 'E4', _, _, _,
+             'A4', _, _, _, 'D5', _, _, _, 'C5', _, _, _, 'A4', _, _, _,
+             'F4', _, _, _, 'A4', _, _, _, 'G4', _, _, _, 'D4', _, _, _,
+             'E4', _, _, 'F4', 'E4', _, _, _, 'D4', _, _, _, _, _, _, _],
+      bass: ['A2', _, _, _, _, _, 'A2', _, 'E2', _, _, _, _, _, _, _,
+             'F2', _, _, _, _, _, 'F2', _, 'C3', _, _, _, _, _, _, _,
+             'D2', _, _, _, _, _, 'D2', _, 'A2', _, _, _, _, _, _, _,
+             'E2', _, _, _, _, _, 'E2', _, 'E2', _, _, _, _, _, _, _],
+      perc: [1, 0, 0, 0, 0, 0, 2, 0, 1, 0, 0, 0, 0, 0, 2, 0]
+    },
+    // el auto andando
+    auto: {
+      bpm: 118,
+      lead: ['E4', _, 'G4', _, 'A4', _, 'G4', _, 'E4', _, 'D4', _, 'E4', _, _, _,
+             'C4', _, 'E4', _, 'G4', _, 'E4', _, 'D4', _, 'B3', _, 'C4', _, _, _],
+      bass: ['A2', _, 'A2', _, 'E2', _, 'E2', _, 'A2', _, 'A2', _, 'E2', _, 'E2', _,
+             'F2', _, 'F2', _, 'C3', _, 'C3', _, 'G2', _, 'G2', _, 'D2', _, 'D2', _],
+      perc: [1, 0, 2, 0, 1, 0, 2, 0, 1, 0, 2, 0, 1, 0, 2, 2]
+    },
+    // duelo de berretines
+    duelo: {
+      bpm: 150,
+      lead: ['A4', 'A4', 'C5', _, 'A4', _, 'E5', _, 'D5', _, 'C5', _, 'B4', _, _, _,
+             'G4', 'G4', 'B4', _, 'G4', _, 'D5', _, 'C5', _, 'B4', _, 'A4', _, _, _],
+      bass: ['A2', 'A2', _, 'A2', 'E2', _, 'E2', _, 'A2', 'A2', _, 'A2', 'E2', _, 'E2', _,
+             'G2', 'G2', _, 'G2', 'D2', _, 'D2', _, 'G2', 'G2', _, 'G2', 'D2', _, 'D2', _],
+      perc: [1, 0, 1, 0, 2, 0, 1, 0, 1, 0, 1, 0, 2, 0, 2, 2]
+    },
+    // la quinta, 2010, con sol
+    verano: {
+      bpm: 126,
+      lead: ['G4', _, 'B4', _, 'D5', _, 'B4', _, 'C5', _, 'E5', _, 'D5', _, _, _,
+             'A4', _, 'C5', _, 'E5', _, 'C5', _, 'D5', _, 'B4', _, 'G4', _, _, _],
+      bass: ['G2', _, _, 'G2', _, 'D3', _, _, 'C3', _, _, 'C3', _, 'G2', _, _,
+             'A2', _, _, 'A2', _, 'E3', _, _, 'D3', _, _, 'D3', _, 'A2', _, _],
+      perc: [1, 0, 2, 0, 1, 0, 2, 2, 1, 0, 2, 0, 1, 0, 2, 2]
+    }
+  };
+  function init() {
+    if (ac) return;
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    ac = new AC(); master = ac.createGain(); master.gain.value = 0.15; master.connect(ac.destination);
+  }
+  function tone(type, freq, t, dur, vol) {
+    if (!freq) return;
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function noise(t, dur, vol) {
+    const n = ac.sampleRate * dur | 0;
+    const buf = ac.createBuffer(1, Math.max(1, n), ac.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const s = ac.createBufferSource(); s.buffer = buf;
+    const g = ac.createGain(); g.gain.value = vol;
+    s.connect(g); g.connect(master); s.start(t);
+  }
+  function tick() {
+    if (!ac || !cur || !on) return;
+    const song = SONGS[cur], spb = 60 / song.bpm / 2;
+    while (nextT < ac.currentTime + 0.25) {
+      const i = step % song.lead.length;
+      tone('square', N[song.lead[i]], nextT, spb * 1.7, 0.22);
+      tone('triangle', N[song.bass[i % song.bass.length]], nextT, spb * 2, 0.5);
+      const p = song.perc[i % song.perc.length];
+      if (p === 1) noise(nextT, 0.05, 0.2);
+      if (p === 2) noise(nextT, 0.03, 0.1);
+      nextT += spb; step++;
+    }
+  }
+  return {
+    unlock() { init(); if (ac && ac.state === 'suspended') ac.resume(); },
+    play(name) {
+      if (cur === name) return;
+      this.unlock(); if (!ac) return;
+      cur = name; step = 0; nextT = ac.currentTime + 0.05;
+      if (!timer) timer = setInterval(tick, 60);
+    },
+    stop() { cur = null; },
+    toggle() { on = !on; this.unlock(); if (master) master.gain.value = on ? 0.15 : 0; },
+    sfx(kind) {
+      this.unlock(); if (!ac || !on) return;
+      const t = ac.currentTime;
+      if (kind === 'bip') tone('square', 760, t, 0.04, 0.18);
+      else if (kind === 'sel') { tone('square', 620, t, 0.04, 0.2); tone('square', 950, t + 0.05, 0.06, 0.18); }
+      else if (kind === 'pista') { [660, 880, 1100].forEach((f, i) => tone('square', f, t + i * 0.08, 0.14, 0.22)); }
+      else if (kind === 'golpe') { noise(t, 0.09, 0.32); tone('square', 150, t, 0.1, 0.26); }
+      else if (kind === 'mal') { [500, 380, 280].forEach((f, i) => tone('sawtooth', f, t + i * 0.07, 0.1, 0.2)); }
+      else if (kind === 'gano') { [523, 659, 784, 1046].forEach((f, i) => tone('square', f, t + i * 0.09, 0.16, 0.22)); }
+      else if (kind === 'motor') { noise(t, 0.5, 0.12); tone('sawtooth', 70, t, 0.5, 0.18); }
+      else if (kind === 'plata') { tone('square', 1100, t, 0.05, 0.18); tone('square', 1500, t + 0.06, 0.07, 0.16); }
+      else if (kind === 'reloj') tone('square', 400, t, 0.03, 0.14);
+    }
+  };
+})();
+refrescarUI();
+/* ---- src2/20_tiles.js ---- */
+// ============================================================
+//  TILES 16x16  (el barrio, ladrillo por ladrillo)
+// ============================================================
+const TILE = 16;
+const TILE_ART = {
+  // vereda rota
+  '.': ['3333333333333333','3444444434444444','3444444434444444','3444443434444444',
+        '3444444434444444','3444444434444444','3434444434444443','3444444434444444',
+        '3333333333333333','3444444434444444','3444444434444444','3444444434444443',
+        '3444444434434444','3444444434444444','3444444434444444','3444444434444444'],
+  // asfalto
+  ',': ['2222122222221222','2222222212222222','2122222222222221','2222232222222222',
+        '2222222222122222','2212222222222222','2222222122222232','2222222222222222',
+        '2322222222212222','2222122222222222','2222222222222122','2122222222222222',
+        '2222222232222222','2222212222222222','2222222222222212','2222222222122222'],
+  // asfalto con linea blanca
+  '-': ['2222122222221222','2222222212222222','2122222222222221','2222232222222222',
+        '2222222222122222','2212222222222222','2222222122222232','4444444422222222',
+        '4444444422212222','2222122222222222','2222222222222122','2122222222222222',
+        '2222222232222222','2222212222222222','2222222222222212','2222222222122222'],
+  // linea blanca vertical
+  '!': ['2222122222221222','2222222212222222','2122222444222221','2222222444222222',
+        '2222222444122222','2212222444222222','2222222444222232','2222222444222222',
+        '2322222222212222','2222122222222222','2222222222222122','2122222222222222',
+        '2222222232222222','2222212222222222','2222222222222212','2222222222122222'],
+  // pasto corto
+  '"': ['9999999999999999','99a999999999a999','9999999999999999','999999a999999999',
+        '9999999999999999','9a999999999999a9','9999999999999999','999999999a999999',
+        '9999a99999999999','9999999999999999','99999999a9999999','999a999999999999',
+        '9999999999999999','99999999999a9999','9a9999999999a999','9999999999999999'],
+  // yuyal (aca aparecen los bichos)
+  '*': ['9999999999999999','9999999999999999','999a9999999a9999','99aba99999aba999',
+        '9abbba999abbba99','99aba99999aba999','999a9999999a9999','9999999999999999',
+        '9999999999999999','9999999a99999999','999999aba9999999','99999abbba999999',
+        '999999aba9999999','9999999a99999999','9999999999999999','9999999999999999'],
+  // el riachuelo (no te metas)
+  '~': ['cccccccccccccccc','ccccdddcccccdddc','cccddedcccddedcc','cccccccccccccccc',
+        'cdddccccdddccccc','ddedccccddedcccc','cccccccccccccccc','ccccccdddccccddd',
+        'cccccddedcccdded','cccccccccccccccc','cdddcccccdddcccc','ddedccccddedcccc',
+        'cccccccccccccccc','cccccdddcccccddd','ccccddedccccdded','cccccccccccccccc'],
+  // pared de ladrillo
+  '#': ['6666666666666666','8888888688888886','8888888688888886','8888888688888886',
+        '6666666666666666','8886888888868888','8886888888868888','8886888888868888',
+        '6666666666666666','8888888688888886','8888888688888886','8888888688888886',
+        '6666666666666666','8886888888868888','8886888888868888','8886888888868888'],
+  // pared con ventana
+  'W': ['6666666666666666','8888888688888886','8888888688888886','8888888688888886',
+        '6663333333333666','8883ssee3eee3888','8883seee3eee3888','8883eeee3eee3888',
+        '8883eeee3eee3888','8883dddd3ddd3888','8883dddd3ddd3888','8883dddd3ddd3888',
+        '8883333333333888','8886888888868888','8886888888868888','8886888888868888'],
+  // puerta
+  'D': ['6666666666666666','8888888688888886','8888888688888886','8880000000000888',
+        '8880777777770888','8880766666670888','8880766666670888','8880766666670888',
+        '8880777777770888','8880777777i70888','8880766666670888','8880766666670888',
+        '8880766666670888','8880777777770888','8880777777770888','8880000000000888'],
+  // arbol de plaza (sobre pasto)
+  'Y': ['99999aaaaaa99999','999abbbbbbbba999','99abbbbbbbbbba99','99abbbb9bbbbba99',
+        '99abbbbbbbbbba99','999abbbbbbbba999','99999aabbaa99999','9999999669999999',
+        '9999999669999999','9999999669999999','9999999669999999','9999999669999999',
+        '9999999669999999','9999996669999999','9999996666999999','9999999999999999'],
+  // arbol de vereda
+  'T': ['44444aaaaaa44444','444abbbbbbbba444','44abbbbbbbbbba44','44abbbb9bbbbba44',
+        '44abbbbbbbbbba44','444abbbbbbbba444','44444aabbaa44444','4444444664444444',
+        '4444444664444444','4444444664444444','4444444664444444','4444444664444444',
+        '4444444664444444','4444446664444444','4444446666444444','4444444444444444'],
+  // paredon con graffiti (aguante)
+  'R': ['4444444444444444','4344444444444434','4444444444444444','4444444444444444',
+        '44gg4444444gg444','4g44g444444g4g44','4g44g444gg4g4g44','4gggg444g44ggg44',
+        '4g44g444g4444g44','4g44g4444gg44g44','4444444444444444','4344444444443444',
+        '4444444444444444','4444444444444444','3333333333333333','2222222222222222'],
+  // alambrado
+  '|': ['3333333333333333','9993999399939993','9993999399939993','9993999399939993',
+        '9993999399939993','9993999399939993','9993999399939993','3333333333333333',
+        '9993999399939993','9993999399939993','9993999399939993','9993999399939993',
+        '9993999399939993','9993999399939993','3333333333333333','2222222222222222'],
+  // contenedor de basura
+  'C': ['4444444444444444','4444444444444444','4400000000000044','440gggggggggg044',
+        '440gggggggggg044','4400000000000044','440ffffffffff044','440ffffffffff044',
+        '440ffffffffff044','440f00000000f044','440ffffffffff044','440ffffffffff044',
+        '440ffffffffff044','4400000000000044','4444004444004444','4444444444444444'],
+  // poste de luz
+  'L': ['4444400000044444','444440iiii044444','4444440000444444','4444444224444444',
+        '4444444224444444','4444444224444444','4444444224444444','4444444224444444',
+        '4444444224444444','4444444224444444','4444444224444444','4444444224444444',
+        '4444444224444444','4444444224444444','4444444334444444','4444443334444444'],
+  // banco de plaza
+  'B': ['9999999999999999','9999999999999999','9999999999999999','9777777777777779',
+        '9666666666666669','9999999999999999','9777777777777779','9666666666666669',
+        '9922999999992299','9922999999992299','9922999999992299','9999999999999999',
+        '9999999999999999','9999999999999999','9999999999999999','9999999999999999'],
+  // cartel de la calle
+  'S': ['4444444444444444','4444444444444444','4400000000000044','440ssssssssss044',
+        '440s00ss0ss0s044','440ss0s00s0ss044','440s0ss0s0s0s044','440ssssssssss044',
+        '4400000000000044','4444444664444444','4444444664444444','4444444664444444',
+        '4444444664444444','4444444664444444','4444444664444444','4444444334444444'],
+  // tierra
+  'g': ['7778777777787777','7777767777777777','7877777777767778','7777777877777777',
+        '7677777777777767','7777787777777777','7777777777877777','7877777767777777',
+        '7777777777777787','7777677777777777','7787777777777677','7777777787777777',
+        '6777777777777777','7777787777777877','7777777777777777','7777677777787777'],
+  // escombros
+  'n': ['7777777777777777','7774447777444777','7744444774444477','7744444774444477',
+        '7764446776444667','7777777777777777','7444777744477777','7444477744477777',
+        '7444477764446777','7664467777777777','7777777774444777','7777444774444477',
+        '7774444774444467','7776644477664777','7777777777777777','7777777777777777'],
+  // piso de baldosa (interior)
+  'F': ['8888888888888888','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq',
+        '8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq',
+        '8888888888888888','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq',
+        '8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq','8qqqqqqq8qqqqqqq'],
+  // pared interior con empapelado
+  'X': ['qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq',
+        'qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq',
+        'qqqpqqqqqqqpqqqq','qqqpqqqqqqqpqqqq','8888888888888888','8888888888888888',
+        '7777777777777777','8888888888888888','8888888888888888','8888888888888888'],
+  // la cama del pibe
+  'b': ['6666666666666666','6ssssssssssssss6','6ssssssssssssss6','6ssssssssssssss6',
+        '6ssssssssssssss6','6gggggggggggggg6','6gggggggggggggg6','6gggggggggggggg6',
+        '6ffffffffffffff6','6gggggggggggggg6','6gggggggggggggg6','6gggggggggggggg6',
+        '6ffffffffffffff6','6gggggggggggggg6','6gggggggggggggg6','6666666666666666'],
+  // el televisor (con la de Independiente)
+  't': ['qqq3qqqqqqqq3qqq','qqqq3qqqqqq3qqqq','qqqqq3qqqq3qqqqq','q00000000000000q',
+        'q01eeeeeeeeee10q','q01eedeeeeede10q','q01eedddeedde10q','q01eeedeedeee10q',
+        'q01eeeeeeeeee10q','q01edeeeeeeed10q','q01eeeeeeeeee10q','q01111111111110q',
+        'q01ii11111ii110q','q00000000000000q','qq00qqqqqqqq00qq','qqqqqqqqqqqqqqqq'],
+  // mostrador del kiosco
+  'M': ['qqqqqqqqqqqqqqqq','0000000000000000','8888888888888888','8888888888888888',
+        '0000000000000000','7776777677767776','7776777677767776','7776777677767776',
+        '7776777677767776','7776777677767776','7776777677767776','7776777677767776',
+        '7776777677767776','7776777677767776','7776777677767776','0000000000000000'],
+  // heladera del kiosco
+  'H': ['0000000000000000','0333333333333330','03eeeeeeeeeeee30','03egg0dd0ii0gd30',
+        '03egg0dd0ii0gd30','03egg0dd0ii0gd30','03e0000000000e30','03edd0ii0gg0dg30',
+        '03edd0ii0gg0dg30','03edd0ii0gg0dg30','03e0000000000e30','03eii0gg0dd0ig30',
+        '03eii0gg0dd0ig30','03eii0gg0dd0ig30','0333333333333330','0000000000000000'],
+  // felpudo de salida
+  'E': ['qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq',
+        'qqqqqqqqqqqqqqqq','qq000000000000qq','qq0ffffffffff0qq','qq0f0f0f0f0f00qq',
+        'qq0ffffffffff0qq','qq0f0f0f0f0f00qq','qq0ffffffffff0qq','qq000000000000qq',
+        'qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq','qqqqqqqqqqqqqqqq'],
+  // tierra de la canchita
+  'A': ['8888788888878888','8888888878888888','8788888888888878','8888878888888888',
+        '8788888888887888','8888888888888888','8888878888788888','8888888888888888',
+        '8878888888888788','8888888878888888','8888888888887888','8788888888888888',
+        '8888888788888888','8888888888788888','8878888888888888','8888878888888888'],
+  // tribuna
+  'V': ['3333333333333333','2222222222222222','2gg22gg22gg22gg2','3333333333333333',
+        '2222222222222222','2gg22gg22gg22gg2','3333333333333333','2222222222222222',
+        '2gg22gg22gg22gg2','3333333333333333','2222222222222222','2gg22gg22gg22gg2',
+        '3333333333333333','2222222222222222','2222222222222222','3333333333333333'],
+  // puente (tablones)
+  'P': ['3333333333333333','3444444434444444','3444444434444444','3333333333333333',
+        '3444444434444444','3444444434444444','3333333333333333','3444444434444444',
+        '3444444434444444','3333333333333333','3444444434444444','3444444434444444',
+        '3333333333333333','3444444434444444','3444444434444444','3333333333333333'],
+  // baranda del puente
+  'Q': ['cccccccccccccccc','3333333333333333','2222222222222222','ccc3cccccccc3ccc',
+        'ccc3cccccccc3ccc','3333333333333333','ccc3cccccccc3ccc','ccc3cccccccc3ccc',
+        '3333333333333333','2222222222222222','3333333333333333','2222222222222222',
+        '2222222222222222','2222222222222222','2222222222222222','2222222222222222']
+  ,
+  // torre / monoblock con ventanas prendidas
+  'o': ['1111111111111111','1ii11ii11ii11ii1','1ii11ii11ii11ii1','1111111111111111',
+        '1ii1111111ii1111','1ii1111111ii1111','1111111111111111','1ii11ii11ii11ii1',
+        '1ii11ii11ii11ii1','1111111111111111','111111ii11ii1111','111111ii11ii1111',
+        '1111111111111111','1ii11ii111111ii1','1ii11ii111111ii1','1111111111111111'],
+  // juncos de la costa negra
+  'J': ['6666666666666666','66o666666o66666o','66o6666o6o6666o6','6po666o6opo666o6',
+        '6po66op6opo66op6','6po66op6opo66op6','6ppo6op6ppo66op6','6ppo6pp6ppo6ppo6',
+        '6666666666666666','6o666o6666o6666o','6o666o666po6666o','6po66po66po666po',
+        '6po66po66ppo66po','6ppo6ppo6ppo6ppo','6666666666666666','6666666666666666'],
+  // barro
+  'j': ['6667666666676666','6666676666666666','6766666666676667','6666667666666666',
+        '6766666666666676','6666676666666666','6666666666766666','6766666676666666',
+        '6666666666666676','6666766666666666','6676666666666766','6666666676666666',
+        '7666666666666666','6666676666666766','6666666666666666','6666766666676666'],
+  // agua podrida (no te metas)
+  'z': ['0000000000000000','00nn0000000nn000','00nn000nn00nn000','0000000nn0000000',
+        '00000000000000nn','000nn00000000nn0','000nn00000000000','0000000nn0000000',
+        '00nn0000nn000000','00nn000000000nn0','0000000000000nn0','000000nn00000000',
+        '00nn00nn00000nn0','00nn0000000000nn','0000000000000000','0000000000000000'],
+  // sintetico de futbol 5 (Estacion 98)
+  'f': ['aaaa9999aaaa9999','aaaa9999aaaa9999','aaaa9999aaaa9999','aaaa9999aaaa9999',
+        '9999aaaa9999aaaa','9999aaaa9999aaaa','9999aaaa9999aaaa','9999aaaa9999aaaa',
+        'aaaa9999aaaa9999','aaaa9999aaaa9999','aaaa9999aaaa9999','aaaa9999aaaa9999',
+        '9999aaaa9999aaaa','9999aaaa9999aaaa','9999aaaa9999aaaa','9999aaaa9999aaaa'],
+  // torre de reflectores
+  'Z': ['0iiiiiiiiiiiiii0','0i111111111111i0','0iiiiiiiiiiiiii0','0000003330000000',
+        '0000003330000000','0000003330000000','0000003330000000','0000003330000000',
+        '0000003330000000','0000003330000000','0000003330000000','0000003330000000',
+        '0000003330000000','0000003330000000','0000033333000000','0000333333300000'],
+  // persiana bajada con firma
+  'e': ['2222222222222222','3333333333333333','2222222222222222','3333333333333333',
+        '22g2222222g22222','33g3333333g33333','22g2222gg2g22222','33ggg333g3ggg333',
+        '22g2222g22g22222','33g3333gg3g33333','2222222222222222','3333333333333333',
+        '2222222222222222','3333333333333333','2222222222222222','0000000000000000'],
+  // carpa de la ranchada
+  'c': ['0000000000000000','0000000ee0000000','000000eeee000000','00000eeeeee00000',
+        '0000eeeeeeee0000','000eeeeeeeeee000','00eeeeeeeeeeee00','0eeeeeeeeeeeeee0',
+        '0ee000eeee000ee0','0ee000eeee000ee0','0ee000eeee000ee0','0eeeeeeeeeeeeee0',
+        '0eeeeeeeeeeeeee0','0000000000000000','0000000000000000','0000000000000000'],
+  // vias del Roca
+  'v': ['7777477777747777','7777477777747777','7777477777747777','2222422222242222',
+        '7777477777747777','7777477777747777','7777477777747777','2222422222242222',
+        '7777477777747777','7777477777747777','7777477777747777','2222422222242222',
+        '7777477777747777','7777477777747777','7777477777747777','2222422222242222'],
+  // escritorio de Roma Seguros
+  'k': ['qqqqqqqqqqqqqqqq','0000000000000000','4444444444444444','4444444444444444',
+        '0000000000000000','3333333333333333','3300333333003333','3300333333003333',
+        '3333333333333333','3300333333003333','3300333333003333','3333333333333333',
+        '3333333333333333','3333333333333333','3333333333333333','0000000000000000'],
+  // estanteria del videoclub
+  'y': ['0000000000000000','0333333333333330','03gfgfgfgfgfgf30','03gfgfgfgfgfgf30',
+        '0333333333333330','03dcdcdcdcdcdc30','03dcdcdcdcdcdc30','0333333333333330',
+        '03ihihihihihih30','03ihihihihihih30','0333333333333330','03gfgfgfgfgfgf30',
+        '03gfgfgfgfgfgf30','0333333333333330','0000000000000000','0000000000000000'],
+  // la pileta vacia, llena de hojas
+  'u': ['1111n1111n111111','111n11111111n111','11111n1111111111','1n1111111n111111',
+        '111111n111111n11','11n111111111n111','1111n11111111111','1n11111n11111n11',
+        '11111n1111111111','111n111111n11111','1111111n11111111','1n11111111n11111',
+        '111n1111n1111111','11111n1111111n11','1111111111n11111','11n1111n11111111'],
+  // pasto seco de la quinta
+  'h': ['9o99999o999999o9','999999999o999999','9o9999999999o999','99999o9999999999',
+        'o999999999o99999','9999o99999999o99','999999999o999999','9o99999999999999',
+        '99999o999999o999','999999999999999o','9o9999o999999999','999999999o999999',
+        '9999o99999999999','99o999999999o999','999999o999999999','9999999999o99999'],
+  // porton de hierro
+  'i': ['3333333333333333','3003003003003003','3003003003003003','3003003003003003',
+        '3333333333333333','3003003003003003','3003003003003003','3003003003003003',
+        '3333333333333333','3003003003003003','3003003003003003','3003003003003003',
+        '3333333333333333','3003003003003003','3003003003003003','3333333333333333']
+};
+
+// que tiles te frenan
+const SOLID = '#WTYR|CLBSnXbtMHV~QozZeckyui';
+const TILES = {};
+registrarCache(TILES);
+function reconstruirTiles() { for (const k in TILE_ART) TILES[k] = makeSprite(TILE_ART[k]); }
+reconstruirTiles();
+/* ---- src2/25_sprites.js ---- */
+// ============================================================
+//  SPRITES: la gente, el Fox y los iconos del mapa
+// ============================================================
+const P_DOWN = [
+  '................','....OOOOOOOO....','...OHHHHHHHHO...','...OHHHHHHHHO...',
+  '...OHHHHHHHHO...','...OKKKKKKKKO...','...OKOKKKKOKO...','...OKKKKKKKKO...',
+  '....OKKKKKKO....','..OOSSSSSSSSOO..','..OKSSSSSSSSKO..','..OKSSSSSSSSKO..',
+  '..OOSSSSSSSSOO..','...OPPPOOPPPO...','...OPPPOOPPPO...','...OZZO..OZZO...'];
+const P_UP = [
+  '................','....OOOOOOOO....','...OHHHHHHHHO...','...OHHHHHHHHO...',
+  '...OHHHHHHHHO...','...OHHHHHHHHO...','...OHHHHHHHHO...','...OHHHHHHHHO...',
+  '....OHHHHHHO....','..OOSSSSSSSSOO..','..OKSSSSSSSSKO..','..OKSSSSSSSSKO..',
+  '..OOSSSSSSSSOO..','...OPPPOOPPPO...','...OPPPOOPPPO...','...OZZO..OZZO...'];
+const P_SIDE = [
+  '................','.....OOOOOOO....','....OHHHHHHHO...','....OHHHHHHHO...',
+  '....OHHHHHKKO...','....OKKKKKKKO...','....OKKKKOKKO...','....OKKKKKKKO...',
+  '.....OKKKKKO....','...OOSSSSSSOO...','...OKSSSSSSKO...','...OKSSSSSSKO...',
+  '...OOSSSSSSOO...','....OPPPPPPO....','....OPPPPPPO....','....OZZZZZZO....'];
+const LEGS2 = {
+  d: ['...OPPPOOPPPO...','..OPPPPOOPPPPO..','..OZZO....OZZO..'],
+  s: ['....OPPPPPPO....','...OPPPO.OPPO...','...OZZO...OZZO..']
+};
+const CAP_DOWN = ['', '', '', '', '..VVVVVVVVVVVV..'];
+const CAP_SIDE = ['', '', '', '', '....VVVVVVVVVV..'];
+const PELO_DOWN = ['', '', '', '', '', '..VV........VV..', '..VV........VV..', '..VV........VV..', '...V........V...'];
+
+function buildPerson(col) {
+  const c = k => PAL[k] || k;
+  const C = {
+    O: PAL['0'], H: c(col.pelo), K: c(col.piel || 'j'), S: c(col.remera),
+    P: c(col.pant || 'c'), Z: c(col.zapas || '1'), V: c(col.extraCol || col.pelo)
+  };
+  function comp(base, over, legs) {
+    let rows = base.slice();
+    if (legs) rows = rows.slice(0, 13).concat(legs);
+    if (over) rows = rows.map((r, i) => {
+      const o = over[i]; if (!o) return r;
+      let out = '';
+      for (let x = 0; x < r.length; x++) out += (o[x] && o[x] !== '.') ? o[x] : r[x];
+      return out;
+    });
+    return makeSprite(rows, C);
+  }
+  const over = col.gorra ? CAP_DOWN : (col.pelolargo ? PELO_DOWN : null);
+  const overS = col.gorra ? CAP_SIDE : (col.pelolargo ? PELO_DOWN : null);
+  const overU = col.gorra ? null : (col.pelolargo ? PELO_DOWN : null);
+  return {
+    d: [comp(P_DOWN, over, null), comp(P_DOWN, over, LEGS2.d)],
+    u: [comp(P_UP, overU, null), comp(P_UP, overU, LEGS2.d)],
+    s: [comp(P_SIDE, overS, null), comp(P_SIDE, overS, LEGS2.s)]
+  };
+}
+const SPR = {};
+registrarCache(SPR);
+function spriteDe(look) { return SPR[look] || (SPR[look] = buildPerson(LOOKS[look] || LOOKS.pibe)); }
+
+// --- el Ford Fox ---
+const FOX_ART = [
+  '....gggggggg....',
+  '...gg111111gg...',
+  '..ggeeeeeeeegg..',
+  '.gggggggggggggg.',
+  'gggggggggggggggg',
+  'gggggggggggggggg',
+  'gigggggggggggigg',
+  '.00gggggggggg00.',
+  '.0110......0110.',
+  '..00........00..'];
+
+// --- iconos del mapa del partido (8x8) ---
+const ICON_ART = {
+  torre:   ['.111111.', '.1i11i1.', '.111111.', '.1i11i1.', '.111111.', '.1i11i1.', '.111111.', '.111111.'],
+  casa:    ['...gg...', '..gggg..', '.gggggg.', 'gggggggg', '.777777.', '.77ii77.', '.77ii77.', '.777777.'],
+  bar:     ['.iiiiii.', '.i1111i.', '..i11i..', '...ii...', '...ii...', '...ii...', '..iiii..', '........'],
+  cancha:  ['.aaaaaa.', '.a5555a.', '.a5aa5a.', '.a5aa5a.', '.a5555a.', '.aaaaaa.', '........', '........'],
+  puente:  ['........', '.4....4.', '.44..44.', '.444444.', '.444444.', '.dddddd.', '.dddddd.', '........'],
+  agua:    ['........', '.dd..dd.', 'd..dd..d', '........', '.dd..dd.', 'd..dd..d', '........', '........'],
+  shop:    ['..5..5..', '.555555.', '.5iiii5.', '.5iiii5.', '.5iiii5.', '.5iiii5.', '.555555.', '........'],
+  plaza:   ['..bbb...', '.bbbbb..', 'bbbbbbb.', '.bbbbb..', '..bbb...', '...66...', '...66...', '..6666..'],
+  oficina: ['.444444.', '.4eeee4.', '.4eeee4.', '.444444.', '.4eeee4.', '.4eeee4.', '.444444.', '..4444..'],
+  video:   ['........', '.111111.', '.1s11s1.', '.1s11s1.', '.111111.', '.1ssss1.', '.111111.', '........'],
+  vias:    ['........', '4......4', '44444444', '4......4', '4......4', '44444444', '4......4', '........'],
+  quinta:  ['...g....', '..ggg...', '.ggggg..', 'ggggggg.', '.q7q7q..', '.q7q7q..', '.qqqqq..', '........'],
+  carpa:   ['...e....', '..eee...', '.eeeee..', 'eeeeeee.', 'ee...ee.', 'ee...ee.', 'eeeeeee.', '........'],
+  yo:      ['........', '..gggg..', '.gggggg.', 'gggggggg', '.g1111g.', '..1..1..', '........', '........']
+};
+
+const ART = {};
+registrarCache(ART);
+function reconstruirArte() {
+  reconstruirTiles();
+  ART.fox = mkArt(FOX_ART);
+  ART.iconos = {};
+  for (const k in ICON_ART) ART.iconos[k] = mkArt(ICON_ART[k]);
+}
+/* ---- src2/30_datos.js ---- */
+// ============================================================
+//  DATOS: gente, zonas del partido, objetos, reloj
+// ============================================================
+const LOOKS = {
+  yo:      { pelo: '1', remera: '3', pant: 'c', zapas: '1' },
+  oso:     { pelo: '4', remera: 'o', pant: '2', zapas: '1' },
+  fredy:   { pelo: '0', remera: 'f', pant: '1', piel: 'k' },
+  tia:     { pelo: '0', pelolargo: 1, remera: 'm', pant: '2', piel: 'k' },
+  hermana: { pelo: '0', pelolargo: 1, remera: 'q', pant: '2', piel: 'k' },
+  juan:    { pelo: '2', extraCol: '1', gorra: 1, remera: '4', pant: 'c' },
+  tortuga: { pelo: '0', remera: 'g', pant: '1' },
+  musa:    { pelo: '6', remera: 'd', pant: '1' },
+  micaela: { pelo: '6', pelolargo: 1, remera: 's', pant: 'c' },
+  chapa:   { pelo: '1', remera: '0', pant: 'o' },
+  rusa:    { pelo: 'i', pelolargo: 1, remera: 's', pant: 'c' },
+  tano:    { pelo: '7', extraCol: '2', gorra: 1, remera: 'g', pant: 'o' },
+  maxi:    { pelo: '2', remera: 'd', pant: '2' },
+  negra:   { pelo: '0', pelolargo: 1, remera: 'a', pant: 'c' },
+  hueso:   { pelo: '0', extraCol: '3', gorra: 1, remera: '3', pant: 'o' },
+  chino:   { pelo: '0', extraCol: 'h', gorra: 1, remera: 'i', pant: 'c' },
+  kers:    { pelo: '4', remera: 'q', pant: '6' },
+  paragua: { pelo: '4', extraCol: 'd', gorra: 1, remera: 'd', pant: 'o' },
+  barra:   { pelo: '1', remera: 'g', pant: '1' },
+  barra2:  { pelo: '1', remera: 'e', pant: '1' },
+  capital: { pelo: '1', extraCol: 'i', gorra: 1, remera: 'i', pant: 'c' },
+  cana:    { pelo: '1', remera: 'c', pant: 'c' },
+  vecino:  { pelo: '4', remera: 'p', pant: '2' },
+  pibe:    { pelo: '6', remera: 'a', pant: 'c' },
+  video:   { pelo: '4', pelolargo: 1, remera: 'l', pant: '1' },
+  apagado: { pelo: '2', remera: '2', pant: '2', piel: '3' }
+};
+
+// ------------------------------------------------------------
+//  LAS 20 ZONAS. mx/my es la posicion en el mapa del partido (0..100)
+// ------------------------------------------------------------
+const ZONAS = {
+  nunez:      { n: 'Barrio Nuñez', loc: 'Sarandi', banda: 'Arsenal', ic: 'torre', mx: 55, my: 50 },
+  musa:       { n: 'Casa de Musa', loc: 'Sarandi', banda: '', ic: 'cancha', mx: 58, my: 47 },
+  sportbar:   { n: 'Sport Bar', loc: 'Sarandi', banda: 'Arsenal', ic: 'bar', mx: 52, my: 44 },
+  costanegra: { n: 'Costa Negra', loc: 'Sarandi', banda: '', ic: 'agua', mx: 70, my: 28 },
+  indep:      { n: 'Cancha de Independiente', loc: 'Avellaneda Centro', banda: 'Independiente', ic: 'cancha', mx: 24, my: 30 },
+  racing:     { n: 'Cancha de Racing', loc: 'Avellaneda Centro', banda: 'Racing', ic: 'cancha', mx: 28, my: 28 },
+  barrioindep:{ n: 'Barrio Independiente', loc: 'Avellaneda Centro', banda: 'Independiente', ic: 'torre', mx: 22, my: 33 },
+  guemes:     { n: 'Barrio Güemes', loc: 'Avellaneda Centro', banda: 'Independiente', ic: 'torre', mx: 32, my: 32 },
+  alto:       { n: 'Alto Avellaneda', loc: 'Avellaneda Centro', banda: '', ic: 'shop', mx: 35, my: 28 },
+  saladita:   { n: 'Torres de La Saladita', loc: 'Sarandi', banda: 'Arsenal', ic: 'torre', mx: 60, my: 54 },
+  plaza:      { n: 'Plaza Alsina', loc: 'Avellaneda Centro', banda: 'Boca y River', ic: 'plaza', mx: 20, my: 27 },
+  fredy:      { n: 'Casa de Fredy', loc: 'Isla Maciel', banda: 'San Telmo', ic: 'casa', mx: 12, my: 14 },
+  kers:       { n: 'Bar de Kers', loc: 'Sarandi', banda: 'Arsenal', ic: 'bar', mx: 50, my: 46 },
+  puente:     { n: 'Puente Pueyrredón', loc: 'Avellaneda Centro', banda: 'Boca y River', ic: 'puente', mx: 14, my: 8 },
+  sietepuentes:{ n: 'Los Siete Puentes', loc: 'Piñeyro', banda: 'El Porvenir', ic: 'vias', mx: 18, my: 50 },
+  roma:       { n: 'Roma Seguros', loc: 'Avellaneda Centro', banda: 'Boca y River', ic: 'oficina', mx: 21, my: 26 },
+  fiambreria: { n: 'Ex Queso y Dulce', loc: 'Sarandi', banda: 'Arsenal', ic: 'casa', mx: 49, my: 57 },
+  hogar:      { n: 'Hogar Comunal', loc: 'Avellaneda Centro', banda: '', ic: 'carpa', mx: 26, my: 25 },
+  videoclub:  { n: 'Videoclub Retro', loc: 'Wilde', banda: '', ic: 'video', mx: 90, my: 50 },
+  quinta:     { n: 'La Quinta', loc: 'la ruta', banda: '', ic: 'quinta', mx: 112, my: 86, extra: 20, oculta: 1 }
+};
+const ORDEN_ZONAS = Object.keys(ZONAS);
+
+// las localidades, para dibujar el partido de fondo
+const LOCALIDADES = [
+  { n: 'DOCK SUD', x: 8, y: 4, w: 42, h: 20 },
+  { n: 'RESERVA', x: 50, y: 4, w: 46, h: 18 },
+  { n: 'AV. CENTRO', x: 14, y: 24, w: 26, h: 20 },
+  { n: 'CRUCECITA', x: 40, y: 24, w: 8, h: 18 },
+  { n: 'SARANDI', x: 48, y: 24, w: 24, h: 36 },
+  { n: 'V. DOMINICO', x: 72, y: 24, w: 14, h: 36 },
+  { n: 'WILDE', x: 86, y: 22, w: 12, h: 42 },
+  { n: 'PIÑEYRO', x: 10, y: 44, w: 22, h: 20 },
+  { n: 'GERLI', x: 32, y: 44, w: 28, h: 26 }
+];
+
+// casa y el flashback no son destinos del mapa: cuentan como el Barrio Nuñez
+function zonaActual() { return ZONAS[G.zona] ? G.zona : 'nunez'; }
+function distZona(a, b) {
+  if (!ZONAS[a] || !ZONAS[b]) return 0;
+  const A = ZONAS[a], B = ZONAS[b];
+  return Math.hypot(A.mx - B.mx, A.my - B.my);
+}
+function minutosViaje(a, b) {
+  if (a === b || !ZONAS[a] || !ZONAS[b]) return 0;
+  return 4 + Math.round(distZona(a, b) * 0.45) + (ZONAS[b].extra || 0) + (ZONAS[a].extra || 0);
+}
+
+// ------------------------------------------------------------
+//  RELOJ: arranca 20:00, el sitio empieza a las 06:00
+// ------------------------------------------------------------
+const MIN_INICIO = 20 * 60, MIN_FINAL = 30 * 60;   // 600 minutos de juego
+function relojTexto(m) {
+  const t = m % 1440;
+  return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+}
+function faltaTexto() {
+  const f = Math.max(0, MIN_FINAL - G.min);
+  return String(Math.floor(f / 60)).padStart(2, '0') + ':' + String(f % 60).padStart(2, '0');
+}
+function gastarMin(n) {
+  G.min += n;
+  if (G.min >= MIN_FINAL) G.min = MIN_FINAL;
+}
+
+// ------------------------------------------------------------
+//  OBJETOS
+// ------------------------------------------------------------
+const OBJETOS = {
+  dni:      { n: 'DNI del 2010', d: 'Vencido. La foto sos vos a los 18.\nAlguien lo dejo tirado ahi.' },
+  libreta:  { n: 'Libreta', d: 'Anotas todo. Es lo unico\nque sabes hacer.' },
+  llaves:   { n: 'Llaves del Fox', d: 'Un Ford Fox del 2004.\nHuele a puchos.' },
+  plano:    { n: 'Plano dibujado', d: 'Un croquis a mano de la orilla.\nHay una cruz marcada.' },
+  legajo:   { n: 'Legajo del Tortuga', d: 'La denuncia original.\nLa camioneta se la robaron.' },
+  chip:     { n: 'Chip prepago', d: 'La linea que compro un tipo\ncon tonada. El Chino lo vendio.' },
+  envoltorio:{ n: 'Envoltorio', d: 'Tirado en los juncos.\nEnvuelto igual que lo de ella.' },
+  foto:     { n: 'Foto de 2010', d: 'Veinte caras y la pileta atras.\nEn el borde, ella.' }
+};
+
+// ------------------------------------------------------------
+//  ESTADO
+// ------------------------------------------------------------
+let G = null;
+function nuevaPartida() {
+  G = {
+    zona: 'nunez', x: 5, y: 6, dir: 'd',
+    min: MIN_INICIO, guita: 480000, stack: 0, usos: 0,
+    obj: { libreta: 1 }, pistas: {}, berretines: [], flags: {},
+    banda: { Arsenal: 0, Independiente: 0, Racing: 0, 'San Telmo': 0, 'El Porvenir': 0, 'Boca y River': 0 },
+    ayudados: 0, cap: 1
+  };
+}
+function tenes(o) { return !!G.obj[o]; }
+function dar(o) { G.obj[o] = 1; Audio2.sfx('pista'); }
+function pista(id, txt) {
+  if (G.pistas[id]) return false;
+  G.pistas[id] = txt; Audio2.sfx('pista'); return true;
+}
+function aprender(b) {
+  if (G.berretines.includes(b)) return false;
+  G.berretines.push(b); return true;
+}
+/* ---- src2/35_guion.js ---- */
+// ============================================================
+//  GUION: la gente que te cruzas y los duelos de berretines
+// ============================================================
+const NPCS = {
+
+  oso: { nom: 'El Oso', look: 'oso', dial: () => {
+    if (G.cap === 1) return [
+      'Otra vez levantado a\nestas horas.',
+      'Hace un mes que no sale\nel sol, flaco.',
+      'Y vos seguis igual que\ncuando salia.',
+      'Anda, hace lo que tengas\nque hacer.',
+      'Yo te espero aca. Como\nsiempre.'];
+    if (G.cap === 2) return null;   // lo maneja la escena del capitulo 3
+    if (G.cap >= 8) return ['Volve entero, pibe.\nNada mas te pido.'];
+    return [
+      'Vos no dormis y yo no\npuedo dormir.',
+      'Somos un buen equipo.',
+      'Si necesitas algo,\nestoy aca.'];
+  }},
+
+  hermana: { nom: 'La hermana', look: 'hermana', dial: () => {
+    if (G.flags.dni) return [
+      'Ya te dije todo lo\nque vi.',
+      'Andate antes de que\nvengan otra vez.'];
+    G.flags.dni = 1; G.cap = 2; dar('dni');
+    pista('llevaron', 'Se la llevaron dos tipos\ncerca de las once.');
+    pista('peruano', 'Antes paso un peruano\npreguntando por ella.');
+    return [
+      '¿Vos sos el que le dice\ntia?',
+      'No me mires asi. Se lo\ndicen todos.',
+      'Se la llevaron hace una\nhora. Eran dos.',
+      'Antes de eso paso un\nperuano preguntando.',
+      'Yo no le vi la cara.',
+      'Y esto estaba tirado\naca en el piso.',
+      '*Agarraste tu DNI viejo*',
+      'Tiene tu nombre, flaco.\nY tu foto de pibe.',
+      'Andate. Y si la\nencontras, avisame.'];
+  }},
+
+  fredy: { nom: 'Fredy', look: 'fredy', dial: () => {
+    if (G.cap === 3) return [
+      'Tanto tiempo, flaco.',
+      'Ocho meses sin llamarme.\nNi un mensaje.',
+      'Pense que te habias\nmuerto. En serio.',
+      '...',
+      'Pero bueno. Contame.\n¿A quien buscas?',
+      '(Le decis que es tu tia.\nUn familiar.)',
+      'Una tia tuya. Mira vos.',
+      'Bueno. Subite al auto\nque conozco gente.'];
+    if (G.cap >= 8) return ['Aca estamos, flaco.\nComo en otra epoca.'];
+    const l = [
+      'Tranquilo que la\nencontramos.',
+      'Yo conozco a todo el\nmundo de este lado.',
+      'Vos manejá. Yo pienso.'];
+    if (G.min > 22 * 60 && !G.flags.laTia) {
+      G.flags.laTia = 1;
+      aprender('mismo');
+      pista('laTia', 'Fredy dijo "LA Tia".\nAsi dicen los clientes.');
+      return [
+        'Che, ¿vos dormiste algo?',
+        'Yo hace dos dias que\nno pego un ojo.',
+        'Antes aguantaba. Ahora\nno.',
+        'Che... ¿y la Tia que\nte dijo exactamente?',
+        '(Dijiste algo?)',
+        'Nada, nada. Segui\nmanejando.'];
+    }
+    return l;
+  }},
+
+  musa: { nom: 'Musa', look: 'musa', dial: () => {
+    if (G.pistas.camioneta) return [
+      'Ya te di todo lo que\ntenia, flaco.',
+      'Fijate en la orilla.\nAlla tiran todo.'];
+    pista('camioneta', 'La camioneta del Tortuga\nfue robo real.');
+    pista('plano', 'En la Costa Negra tiran\nlo que no quieren que\naparezca.');
+    dar('plano');
+    return [
+      '¡Pero mira quien vino!',
+      'A esta hora y con esa\ncara. Pasa algo.',
+      '...',
+      'A ver. Contame despacio.',
+      '...',
+      'Pará. ¿El Tortuga?',
+      'Flaco, la camioneta del\nTortuga se la robaron.',
+      'De verdad. Yo la vi\ndesarmada en Gerli.',
+      'No fue ningun fraude.\nReclamaba lo suyo.',
+      'Y vos lo trataste como\na un chorro.',
+      '...',
+      'Otra cosa. Si buscas\nalgo que alguien tiro,',
+      'anda a la Costa Negra.\nAhi va a parar todo.',
+      'Tomá, te dibujo donde.',
+      '*Te dio un plano*'];
+  }},
+
+  micaela: { nom: 'Micaela', look: 'micaela', dial: () => {
+    if (G.pistas.camioneta_rara) return ['Ya te conte lo que vi.\nNo me metas en lios.'];
+    pista('camioneta_rara', 'Micaela vio una chata\nir al rio a las tres.');
+    aprender('sola');
+    return [
+      'Uy. Vos.',
+      'Sentate antes de que\nte caigas.',
+      '...',
+      'Si, vi pasar una\ncamioneta rara.',
+      'Como a las tres. Iba\npara el lado del rio.',
+      'Dos tipos adelante.\nNo les vi la cara.',
+      'Igual yo no vi nada,\n¿escuchaste?',
+      'En este barrio la que\nhabla de mas cobra.'];
+  }},
+
+  juan: { nom: 'Juan', look: 'juan', dial: () => {
+    if (G.pistas.juan) return [
+      'Ya esta, ya te dije.\n¿Que mas queres?',
+      'Yo no hice nada malo,\nboludo. En serio.'];
+    return ['Che, boludo, tranqui.\nYo no vendi a nadie.',
+      '¿Que me mirás asi?'];
+  }},
+
+  tortuga: { nom: 'El Tortuga', look: 'tortuga', dial: () => {
+    if (G.pistas.tortuga) return [
+      'Cuando termines esto\nvenite un domingo.',
+      'Traé la libreta y te\nborro el expediente.'];
+    return ['Uh. Mirá quien apareció.'];
+  }},
+
+  chino: { nom: 'El Chino', look: 'chino', dial: () => {
+    if (G.pistas.chip) return ['Ya te dije todo. Andá.'];
+    pista('chip', 'Uno con tonada compro\nuna linea prepaga hoy.');
+    dar('chip');
+    aprender('chamuyo');
+    return [
+      'Ese celular que traes\nno sirve mas.',
+      'Cortaron todo por el\nestado de sitio.',
+      '...',
+      'Che. Hoy vino un tipo\ncon tonada.',
+      'Compro una linea nueva.\nPago en efectivo.',
+      'Nadie compra una linea\nnueva un martes de noche',
+      'salvo que la vieja\nqueme.',
+      'Tomá el numero. No me\nnombres, ¿si?'];
+  }},
+
+  paraguayo: { nom: 'El Paraguayo', look: 'paragua', dial: () => {
+    if (G.pistas.nafta) return ['Andá tranquilo, jefe.\nEl coche te lo cuido.'];
+    pista('nafta', 'Fredy andaba pidiendo\nplata para nafta.');
+    return [
+      'Una moneda para el\ncoche, maestro.',
+      '...',
+      'Al peruano lo vi, si.',
+      'Andaba por aca hace un\nrato pidiendo.',
+      'Pidiendo plata para\ncargar nafta.',
+      'Un tipo con mercaderia\nno pide para nafta,',
+      '¿o me equivoco?'];
+  }},
+
+  kers: { nom: 'Kers', look: 'kers', dial: () => [
+    'Cuarenta años atendiendo\nesta barra.',
+    'Vi entrar a los padres.\nAhora entran los hijos.',
+    'Y todos con la misma\ncara de perro.',
+    'Juan esta en el fondo.\nHace rato que esta.'] },
+
+  video: { nom: 'La del videoclub', look: 'video', dial: () => {
+    const r = REFERENCIAS[rnd(REFERENCIAS.length)];
+    if (!G.flags.video) {
+      G.flags.video = 1; aprender('careta');
+      return [
+        'Pasá, pasá. Sos el\nprimero en tres dias.',
+        'No, no cerre nunca.\n¿Para que?',
+        'Si igual no tengo a\ndonde ir.',
+        'Llevate algo. Va por\nla casa.',
+        r[0] + '\n"' + r[1] + '"'];
+    }
+    return ['Llevate otra.', r[0] + '\n"' + r[1] + '"'];
+  }},
+
+  apagado: { nom: '???', look: 'apagado', dial: () => [
+    'El turno noche.',
+    'El turno noche.',
+    'El turno noche.'] },
+
+  nene: { nom: 'Un nene', look: 'pibe', dial: () => ['¿Por que corres?'] },
+  barra2: { nom: 'El de la Isla', look: 'barra2', dial: () => [
+    'Pasá tranquilo.',
+    'Pero no mires a nadie\na los ojos.'] },
+  capital: { nom: 'Los de Capital', look: 'capital', dial: () => [
+    'Nosotros cruzamos el\npuente y ustedes nada.',
+    'Ni un tiro tiraron.'] },
+  vecina: { nom: 'Una vecina', look: 'vecino', dial: () => ['Flaco, es de dia.'] },
+  hueso: { nom: 'El Hueso', look: 'hueso', dial: () => [
+    'Aca hay luz. Cortaron\nel cable, nada mas.',
+    'No toques nada con las\nmanos mojadas.',
+    'Yo me quedo mirando la\ncalle.'] },
+  rusa: { nom: 'La Rusa', look: 'rusa', dial: () => {
+    if (G.flags.rusa) return ['Tomá agua. Es lo unico\nque te va a servir.'];
+    G.flags.rusa = 1; G.ayudados++;
+    return [
+      'Tenés la presion por\nlas nubes, boludo.',
+      'Sentate. Sentate te\ndije.',
+      '...',
+      'Yo te conozco de cuando\neras un pibe.',
+      'Y esto no sos vos.',
+      'Andá. Pero volve.'];
+  }},
+  chapa: { nom: 'El Gordo Chapa', look: 'chapa', dial: () => {
+    if (G.flags.chapa) return ['El Fox te lo dejo\nandando. Cuidalo.'];
+    G.flags.chapa = 1; G.ayudados++; aprender('gil');
+    return [
+      'Subite que te miro\nel motor.',
+      '...',
+      'Esta hecho mierda pero\nanda. Como vos.',
+      'Te acompaño porque me\ndebes una del 2010.',
+      'No te la voy a cobrar\nahora. Tranquilo.'];
+  }},
+  negra: { nom: 'La Negra', look: 'negra', dial: () => {
+    if (G.flags.negra) return ['Cuidate, gil.'];
+    G.flags.negra = 1; G.ayudados++; aprender('careta');
+    return [
+      'Estas hecho un desastre,\nflaco.',
+      'Te quiero igual, pero\nsos un gil.',
+      'Agarrá las cosas y\ncamina rapido.',
+      'Y no le creas a nadie\nesta noche.',
+      'A nadie. Ni al que te\nlleva en el auto.'];
+  }}
+};
+
+// ------------------------------------------------------------
+//  BERRETINES: los retruques que vas juntando
+// ------------------------------------------------------------
+const BERRETINES = {
+  mismo:   'Sos igual que yo, nada\nmas que peinado.',
+  sola:    'Quedaste mas solo que\nun perro en un coche.',
+  gil:     'Caminas como guapo y\ncobras como gil.',
+  careta:  'Se te cayo la careta y\nabajo no habia nada.',
+  chamuyo: 'Vos no tenes calle.\nTenes pasillo.',
+  amague:  'Te comiste el amague\ncompleto.',
+  vuelto:  'Te abrieron la billetera\ny diste las gracias.'
+};
+
+// ------------------------------------------------------------
+//  DUELOS
+// ------------------------------------------------------------
+const DUELOS = {
+  santelmo: {
+    nom: 'EL DE LA ISLA', look: 'barra2', min: 15,
+    pre: ['Este pasillo es privado,\nturista.'],
+    rondas: [
+      { i: 'Este pasillo es privado,\nturista.',
+        o: [{ t: 'Turista sera tu vieja.\nYo se a que vine.', ok: 1 },
+            { t: 'Vengo a ver a Fredy.\nDejame pasar.' },
+            { t: 'Te rompo la cabeza si\nno te corres.' }] },
+      { i: '¿Y vos que sos? ¿Cana?',
+        o: [{ t: 'Si fuera cana no te\npediria permiso.', ok: 1 },
+            { t: 'No, soy amigo de Fredy.' },
+            { t: 'Soy de la barra de\nArsenal, respetame.' }] },
+      { i: 'Aca no entra cualquiera,\npapa.',
+        o: [{ t: 'Yo no soy cualquiera.\nSoy el que le paga.', ok: 1 },
+            { t: 'Dale, por favor, es\nurgente.' },
+            { t: 'Entro igual. Corrase.' }] },
+      { i: 'Nombrame a alguien de\naca adentro.',
+        o: [{ t: 'La Tia. Y vos ya sabes\nde quien te hablo.', ok: 1 },
+            { t: 'A Fredy. Ya te dije.' },
+            { t: 'No conozco a nadie.' }] }],
+    gana: ['...', 'Pasá. Pero rapido.',
+      'Y no mires a nadie a\nlos ojos, ¿si?'],
+    pierde: ['Andate a tu casa, flaco.',
+      'Volve cuando sepas\nhablar.']
+  },
+
+  capital: {
+    nom: 'LOS DE CAPITAL', look: 'capital', min: 15,
+    pre: ['Cruzamos el puente.\nEsto ahora es nuestro.'],
+    rondas: [
+      { i: 'Cruzamos el puente.\nEsto ahora es nuestro.',
+        o: [{ t: 'Cruzaron porque alla no\nlos aguanta nadie.', ok: 1 },
+            { t: 'Yo solo quiero pasar.' },
+            { t: 'Esto es del Rojo.\nRajen.' }] },
+      { i: '¿Y vos de donde sos,\nsorete?',
+        o: [{ t: 'De aca. De cuando esto\nera un barrio.', ok: 1 },
+            { t: 'De Sarandi. ¿Algun\nproblema?' },
+            { t: 'De ningun lado. Dejame\npasar.' }] },
+      { i: 'Aca ahora se paga\npeaje.',
+        o: [{ t: 'Peaje cobra el que\nconstruyo el puente.', ok: 1 },
+            { t: 'Tomá, agarrá esto y\ndejame en paz.' },
+            { t: 'No pago nada.' }] },
+      { i: 'Te vamos a dar vuelta\nel auto.',
+        o: [{ t: 'Ese auto no lo dan\nvuelta ni en el taller.', ok: 1 },
+            { t: 'El auto no lo toquen.' },
+            { t: 'Probá y vas a ver.' }] }],
+    gana: ['Uh, el pibe habla.',
+      'Pasá, pasá. Igual ese\nauto no lo queremos.'],
+    pierde: ['Volvete a Sarandi,\ncampeon.']
+  },
+
+  tortuga: {
+    nom: 'EL TORTUGA', look: 'tortuga', min: 20,
+    pre: ['¿Vos sos el del seguro?', 'Sentate.'],
+    // este duelo se gana admitiendo, no bardeando
+    rondas: [
+      { i: '¿Vos sos el del seguro?',
+        o: [{ t: 'Si. Y me equivoque\ncon vos.', ok: 1 },
+            { t: 'No se de que me habla.' },
+            { t: 'Usted me amenazo a mi\nprimero.' }] },
+      { i: 'Cuatro años estuve\nadentro. ¿Sabes que es?',
+        o: [{ t: 'No. Y no voy a hacer\ncomo que si.', ok: 1 },
+            { t: 'Me imagino, debe ser\nduro.' },
+            { t: 'Yo tambien la pase mal.' }] },
+      { i: 'Vos me miraste y ya\nsabias lo que yo era.',
+        o: [{ t: 'Si. Y estaba equivocado\nde punta a punta.', ok: 1 },
+            { t: 'Yo solo hice mi trabajo.' },
+            { t: 'Era mi obligacion\ndesconfiar.' }] },
+      { i: '¿Y ahora que queres de\nmi, pibe?',
+        o: [{ t: 'Nada. Vine a decirte\nque tenias razon.', ok: 1 },
+            { t: 'Necesito que me ayudes.' },
+            { t: 'Que me digas donde esta\nla Tia.' }] }],
+    gana: ['...',
+      '...',
+      'La puta madre, pibe.',
+      'Nadie me habia dicho\neso nunca.',
+      'La camioneta me la\nrobaron de verdad.',
+      'Y ustedes me hicieron\nvenir catorce veces.',
+      'Pero bueno. Ya esta.',
+      'Decime que necesitas y\nte doy gente.'],
+    pierde: ['Andate, pibe.',
+      'Segui creyendo lo que\nse te canta.']
+  },
+
+  juan: {
+    nom: 'JUAN', look: 'juan', min: 20,
+    pre: ['Che, boludo, tranqui.\nYo no vendi a nadie.'],
+    rondas: [
+      { i: 'Che, boludo, tranqui.\nYo no vendi a nadie.',
+        o: [{ t: 'Yo no dije que vendiste.\nDije que hablaste.', ok: 1 },
+            { t: 'Vos sos un traidor de\nmierda.' },
+            { t: 'Perdon, me confundi.' }] },
+      { i: 'Me preguntaron donde\nparabas y les dije.',
+        o: [{ t: '¿Quien te pregunto?\nDecilo despacio.', ok: 1 },
+            { t: 'Sos un buchon.' },
+            { t: 'Esta bien, no importa.' }] },
+      { i: 'Un peruano. Uno que\nvos conoces.',
+        o: [{ t: '¿Y que mas le diste\naparte del dato?', ok: 1 },
+            { t: 'Fredy. Sabia.' },
+            { t: 'No lo conozco a ningun\nperuano.' }] },
+      { i: 'Nada. Un papel viejo\nque tenia en casa.',
+        o: [{ t: 'Un papel viejo mio.\nDe mi cumpleaños.', ok: 1 },
+            { t: '¿Que papel?' },
+            { t: 'Me chupa un huevo el\npapel.' }] }],
+    gana: ['...',
+      'Eran dos gramos de\nprensado, hermano.',
+      'Dos gramos.',
+      'Te lo juro que no pense\nque iba a pasar nada.',
+      'Yo no hice nada, boludo.\nYo hable, nada mas.',
+      '(Le creés. Eso es lo\npeor de todo.)'],
+    pierde: ['Ya esta, ya esta.\nDejame en paz.']
+  },
+
+  fredy: {
+    nom: 'FREDY', look: 'fredy', min: 0, final: 1,
+    pre: ['Y bueno, flaco.', 'Aca estamos.'],
+    rondas: [
+      { i: 'Yo no te fui a buscar.\nMe vinieron a contar.',
+        o: [{ t: 'Te contaron porque vos\npreguntaste.', ok: 1 },
+            { t: 'Juan me lo dijo todo.' },
+            { t: 'Devolveme a la Tia y\nlisto.' }] },
+      { i: 'Quince años, flaco.\nQuince.',
+        o: [{ t: 'Quince años cobrandome\nel doble. Todos.', ok: 1 },
+            { t: 'Ya se, ya se. Perdon.' },
+            { t: 'No me vengas con eso\nahora.' }] },
+      { i: 'Me cambiaste por la\nmitad de precio.',
+        o: [{ t: 'Vos me cambiaste antes.\nYo era un cliente.', ok: 1 },
+            { t: 'Fue una decision de\nplata, nada personal.' },
+            { t: 'Y volveria a hacerlo.' }] },
+      { i: '¿Con guita? No.\nLe di lo que no piensa.',
+        o: [{ t: 'Sos igual que yo, nada\nmas que peinado.', ok: 1, req: 'mismo' },
+            { t: 'Sos una basura, Fredy.' },
+            { t: 'Juan es un boludo, no\nes tu merito.' }] },
+      { i: 'Vos viniste hasta aca\npor ella. Mentira.',
+        o: [{ t: 'Vine por el medio kilo.\nY los dos lo sabemos.', ok: 1 },
+            { t: 'Vine por ella. Punto.' },
+            { t: 'Vine porque no tengo a\nnadie mas.' }] }],
+    gana: ['...'],
+    pierde: ['...']
+  }
+};
+
+// ------------------------------------------------------------
+//  EL VIDEOCLUB
+// ------------------------------------------------------------
+const REFERENCIAS = [
+  ['Nueve Reinas', 'Esa la vi ocho veces\ny no entiendo el final.'],
+  ['Un Oso Rojo', 'El tipo sale de preso y\nse encuentra con esto.'],
+  ['Pizza, birra, faso', 'Es un documental, flaco.\nNo es una pelicula.'],
+  ['El Aura', 'Mucho silencio. A mi me\ngusta el silencio.'],
+  ['Perros de la calle', 'Todos hablan y nadie\nhace nada. Como aca.'],
+  ['Tiempos violentos', 'La del maletin. Nunca te\ndicen que hay adentro.'],
+  ['Jackie Brown', 'La misma escena tres\nveces. Ahi lo entendes.'],
+  ['Chinatown', 'El que investiga es el\nque menos entiende.'],
+  ['Corazon Satanico', 'El detective busca a un\ntipo. Adivina quien era.'],
+  ['La escalera de Jacob', 'Al final te das cuenta\nde donde estabas parado.'],
+  ['Memento', 'El tipo no se acuerda\nnada y igual sabe todo.'],
+  ['Sospechosos comunes', 'El que te cuenta la\nhistoria la hizo.'],
+  ['Taxi Driver', 'Un tipo que maneja de\nnoche y se le va.'],
+  ['Sin City', 'Blanco y negro con una\nsola cosa de color.'],
+  ['Ciudad de Dios', 'Los pibes del barrio,\npero en Brasil.'],
+  ['Amores Perros', 'Tres historias y un\nchoque. Muy triste.'],
+  ['Blade Runner', 'Llueve todo el tiempo\ny nunca sale el sol.'],
+  ['El Marginal', 'Serie. Toda la temporada\nen un pabellon.'],
+  ['Okupas', 'Cuatro giles en una casa\nque no es de ellos.'],
+  ['Tumberos', 'Mi hijo se sabe todos\nlos parlamentos.'],
+  ['El secreto de sus ojos', 'La escena de la cancha.\nNada mas te digo.'],
+  ['Relatos salvajes', 'La del auto en la ruta.\nYo hubiera hecho igual.'],
+  ['Elefante Blanco', 'Se filmo a treinta\ncuadras de aca.'],
+  ['Leon', 'El tipo cuida una planta\ny una nena. Nada mas.'],
+  ['Drive', 'Casi no habla y maneja\nmejor que vos.'],
+  ['Fuego contra fuego', 'Los dos son iguales y\nse dan cuenta tarde.'],
+  ['Kill Bill', 'La lista de nombres.\nYo tengo una parecida.'],
+  ['Bastardos sin gloria', 'La escena del sotano.\nTodos hablan y hablan.'],
+  ['El Padrino II', 'La segunda es mejor.\nSiempre lo digo.'],
+  ['Carlitos Way', 'El tipo quiere salir y\nno lo dejan.']
+];
+/* ---- src2/40_mapas.js ---- */
+// ============================================================
+//  LOS MAPAS DE CADA ZONA
+// ============================================================
+const MAPAS = {
+  nunez: {
+    t: ['oooooooooooooooo','oooooooooooooooo','oooooooooooooooo','....D......D....',
+        '................','..C..........L..','................','................',
+        '................','..L..........C..','................','oooooooooooooooo'],
+    npcs: [{ x: 8, y: 6, d: 'd', n: 'chapa' }],
+    obj: [{ x: 11, y: 3, txt: 'La puerta del 4to C.\nHace años que no abre.' }],
+    puertas: [{ x: 4, y: 3, a: 'casa', ax: 5, ay: 6 }],
+    amb: 'Las torres tapan lo que\nquedaria de cielo.'
+  },
+  casa: {
+    interior: 1,
+    t: ['XXXXXXXXXXXX','XbXXtXXXXXXX','XFFFFFFFFFFX','XFFFFFFFFFFX','XFFFFFFFFFFX',
+        'XFFFFFFFFFFX','XFFFFFFFFFFX','XFFFFEFFFFFX','XXXXXXXXXXXX'],
+    npcs: [{ x: 8, y: 4, d: 'd', n: 'oso' }],
+    obj: [{ x: 4, y: 1, txt: 'La tele prendida sin\nvolumen. No hay señal.' },
+          { x: 1, y: 1, txt: 'Tu cama. Hace tres dias\nque no la usas.' }],
+    puertas: [{ x: 5, y: 7, a: 'nunez', ax: 4, ay: 4 }],
+    amb: 'Dos ambientes y un olor\na cigarrillo de ayer.'
+  },
+  musa: {
+    t: ['ZZ||||||||||||||ZZ','||ffffffffffffff||','||ffffffffffffff||','||ffffffffffffff||',
+        '||ffffffffffffff||','||||||||||||||||||','..................','..................',
+        '#####D############','#WW###############','##################','##################'],
+    npcs: [{ x: 5, y: 7, d: 'd', n: 'musa' }],
+    obj: [{ x: 8, y: 3, txt: 'Doce canchas de sintetico\ncon los reflectores dados.' },
+          { x: 2, y: 6, txt: 'Estacion 98. Iba a ser la\nterminal del bondi.' }],
+    amb: 'Los reflectores prendidos\ny las canchas vacias.'
+  },
+  sportbar: {
+    interior: 1,
+    t: ['XXXXXXXXXXXXXX','XHHHHXXXXtXXXX','XFFFFFFFFFFFFX','XMMMMMFFFFFFFX',
+        'XFFFFFFFFFFFFX','XFFFFFFFFFFFFX','XFFFFFFFFFFFFX','XFFFFFEFFFFFFX','XXXXXXXXXXXXXX'],
+    npcs: [{ x: 2, y: 2, d: 'd', n: 'micaela' }, { x: 10, y: 5, d: 'l', n: 'negra' }],
+    obj: [{ x: 9, y: 1, txt: 'Un partido viejo repetido.\nNadie lo mira.' }],
+    amb: 'Neon azul y mesas rayadas.\nEl unico lugar con gente.'
+  },
+  costanegra: {
+    t: ['jjjjjjjjjjjjjjjjjj','jjJJjjjjJJjjjjJJjj','jJJJjjjJJJjjjJJJjj','jjjjjjjjjjjjjjjjjj',
+        'jjJJjjjjjjjjJJjjjj','jjjjjjjjjjjjjjjjjj','jjjjJJjjjjJJjjjjjj','jjjjjjjjjjjjjjjjjj',
+        'zzzzzzzzzzzzzzzzzz','zzzzzzzzzzzzzzzzzz','zzzzzzzzzzzzzzzzzz','zzzzzzzzzzzzzzzzzz'],
+    obj: [{ x: 8, y: 7, txt: 'El agua no se mueve.\nNi con viento.' }],
+    cava: { x: 11, y: 5 },
+    amb: 'Juncos, barro y el agua\nque no refleja nada.'
+  },
+  indep: {
+    t: ['VVVVVVVVVVVVVVVVVV','VVVVVVVVVVVVVVVVVV','||||||||||||||||||','AAAAAAAAAAAAAAAAAA',
+        'AAcAAAAAAAAAAAcAAA','AAAAAAAAAAAAAAAAAA','AAAAAAAAAAAAAAAAAA','AAcAAAAAAAAAAAcAAA',
+        'AAAAAAAAAAAAAAAAAA','AAAAAAAAAAAAAAAAAA','AAnAAAAAAAAAAnAAAA','RRRRRRRR....RRRRRR'],
+    npcs: [{ x: 8, y: 6, d: 'd', duelo: 'tortuga', n: 'tortuga' },
+           { x: 3, y: 9, d: 'r', n: 'hueso' }],
+    obj: [{ x: 13, y: 3, txt: 'Un mural: EL ROJO ES EL\nPUEBLO. Lo taparon.' }],
+    amb: 'Adentro de la cancha\narmaron ranchadas.'
+  },
+  racing: {
+    t: ['VVVVVVVVVVVVVVVVVV','||||||||||||||||||','AAAAAAAAAAAAAAAAAA','AAAAAcAAAAAcAAAAAA',
+        'AAAAAAAAAAAAAAAAAA','AAAAAAAAAAAAAAAAAA','AAAAAcAAAAAcAAAAAA','AAAAAAAAAAAAAAAAAA',
+        'AAnAAAAAAAAAAAAnAA','AAAAAAAAAAAAAAAAAA','RRRRRRRR....RRRRRR','RRRRRRRR....RRRRRR'],
+    npcs: [{ x: 9, y: 5, d: 'd', n: 'paraguayo' }],
+    amb: 'El cilindro de hormigon\ny nadie adentro.'
+  },
+  barrioindep: {
+    t: ['oooooooooooooooo','oooooooooooooooo','oooooooooooooooo','................',
+        '..L....C.....L..','................','................','................',
+        'oooooooooooooooo','oooooooooooooooo','................','................'],
+    npcs: [{ x: 6, y: 6, d: 'd', n: 'rusa' }],
+    amb: 'Diez torres y pasillos\nque no terminan nunca.'
+  },
+  guemes: {
+    t: ['oooooooooooooooo','oooooooooooooooo','................','..C....C.....C..',
+        '................','................','||||||....||||||','................',
+        'oooooooooooooooo','oooooooooooooooo','................','................'],
+    obj: [{ x: 7, y: 3, txt: 'Contenedores quemados.\nAdentro hay papel picado.' }],
+    pistaZona: ['guemes', 'Juan anduvo por Güemes\nbuscando quien le compre.'],
+    amb: 'Rejas altas y contenedores\nprendidos fuego.'
+  },
+  alto: {
+    interior: 1,
+    t: ['XXXXXXXXXXXXXX','XHHHHXXHHHHXXX','XFFFFFFFFFFFFX','XFFFFFFFFFFFFX',
+        'XFFFFFFFFFFFFX','XMMMMFFFMMMMFX','XFFFFFFFFFFFFX','XFFFFFEFFFFFFX','XXXXXXXXXXXXXX'],
+    npcs: [{ x: 10, y: 3, d: 'd', n: 'maxi' }],
+    obj: [{ x: 3, y: 1, txt: 'Vidrieras a media luz.\nAhorro de energia, dicen.' }],
+    amb: 'El shopping abierto y\nvacio. Musica funcional.'
+  },
+  saladita: {
+    t: ['oooooooooooooooo','oooooooooooooooo','................','..M....M.....M..',
+        '................','................','..M....M.....M..','................',
+        'oooooooooooooooo','oooooooooooooooo','................','................'],
+    npcs: [{ x: 5, y: 4, d: 'd', n: 'chino' }],
+    amb: 'Puestos de chapa abajo\ny cables entre balcones.'
+  },
+  plaza: {
+    t: ['RRRRRRRR....RRRRRR','R"""""""...."""""R','R"YY""""...."""YYR','R""""""".........R',
+        'R................R','R................R','R""""""".........R','R"YY""""....""YY"R',
+        'R"""""""...."""""R','RRRRRRRR....RRRRRR'],
+    npcs: [{ x: 9, y: 4, d: 'd', duelo: 'capital', n: 'capital' },
+           { x: 3, y: 8, d: 'd', n: 'apagado' }],
+    obj: [{ x: 14, y: 5, txt: 'El monumento rodeado de\nvallas. Nadie las puso.' }],
+    amb: 'Vallas, arboles y un tipo\ncaminando en circulos.'
+  },
+  fredy: {
+    t: ['##############','#............#','#.##########.#','#.#........#.#','#.#.######.#.#',
+        '#.#.#....#.#.#','#.#.#.D..#.#.#','#.#.######.#.#','#.#........#.#','#.##########.#',
+        '#............#','##############'],
+    npcs: [{ x: 3, y: 1, d: 'd', duelo: 'santelmo', n: 'barra2' }],
+    obj: [{ x: 6, y: 6, txt: 'La puerta de Fredy.\nCerrada con candado nuevo.' }],
+    pistaZona: ['candado', 'El candado de la casa de\nFredy es nuevo. De hoy.'],
+    amb: 'Pasillos de chapa que\ndoblan y vuelven a doblar.'
+  },
+  kers: {
+    interior: 1,
+    t: ['XXXXXXXXXXXXXX','XXXXXXXXXXXXXX','XFFFFFFFFFFFFX','XMMMMMMFFFFFFX',
+        'XFFFFFFFFFFFFX','XFFFFFFFFFFFFX','XFFFFFFFFFFFFX','XFFFFFEFFFFFFX','XXXXXXXXXXXXXX'],
+    npcs: [{ x: 3, y: 2, d: 'd', n: 'kers' },
+           { x: 11, y: 5, d: 'l', duelo: 'juan', n: 'juan' }],
+    amb: 'Barra de madera oscura\ny gente tomando en silencio.'
+  },
+  puente: {
+    t: ['zzzzzzzzzzzzzzzzzz','QQQQQQQQQQQQQQQQQQ','PPPPPPPPPPPPPPPPPP','PPPPPPPPPPPPPPPPPP',
+        'PPPPPPPPPPPPPPPPPP','QQQQQQQQQQQQQQQQQQ','zzzzzzzzzzzzzzzzzz','zzzzzzzzzzzzzzzzzz'],
+    npcs: [{ x: 9, y: 3, d: 'd', n: 'apagado' }],
+    obj: [{ x: 4, y: 2, txt: 'Del otro lado esta la\nCapital. Nadie cruzo hoy.' }],
+    pistaZona: ['nadiecruzo', 'Nadie cruzo el puente\nhacia Capital esta noche.'],
+    amb: 'Viento y las luces de la\nautopista a lo lejos.'
+  },
+  sietepuentes: {
+    t: ['gggggggggggggggggg','gg||||gggggg||||gg','gggggggggggggggggg','vvvvvvvvvvvvvvvvvv',
+        'vvvvvvvvvvvvvvvvvv','gggggggggggggggggg','gg||||gggggg||||gg','gggggggggggggggggg',
+        'ggnngggggggggnnggg','gggggggggggggggggg'],
+    obj: [{ x: 8, y: 5, txt: 'Fierros oxidados cruzando\nlas vias. Eco de chapa.' }],
+    pistaZona: ['bolsa', 'Un tipo paso a pie con\nuna bolsa pesada al oeste.'],
+    amb: 'Sombra constante, aunque\nno haya sol que la haga.'
+  },
+  roma: {
+    interior: 1,
+    t: ['XXXXXXXXXXXXXX','XkkXXkkXXkkXXX','XFFFFFFFFFFFFX','XFFFFFFFFFFFFX',
+        'XkkXXkkXXkkXXX','XFFFFFFFFFFFFX','XFFFFFFFFFFFFX','XFFFFFEFFFFFFX','XXXXXXXXXXXXXX'],
+    obj: [{ x: 5, y: 1, txt: 'Tu escritorio. El mate\nde ayer sigue ahi.' },
+          { x: 1, y: 4, txt: 'ROMA SEGUROS. El cartel\nque mirás hace ocho años.' }],
+    archivo: { x: 10, y: 4 },
+    amb: 'Melamina gris, biblioratos\ny olor a cafe frio.'
+  },
+  fiambreria: {
+    interior: 1,
+    t: ['XXXXXXXXXXXXXX','XeeeeeeeeeeeeX','XFFFFFFFFFFFFX','XMMMMMFFFFFFFX',
+        'XFFFFFFFFFFFFX','XFFFFFFFFFFFFX','XFFFFFFFFFFFFX','XFFFFFEFFFFFFX','XXXXXXXXXXXXXX'],
+    npcs: [{ x: 8, y: 4, d: 'd', n: 'hermana' }],
+    obj: [{ x: 3, y: 3, txt: 'El mostrador donde\ntrabajaste dos años.' }],
+    amb: 'Ganchos vacios y la\npersiana a media asta.'
+  },
+  hogar: {
+    interior: 1,
+    t: ['XXXXXXXXXXXXXX','XbXbXbXbXbXbXX','XFFFFFFFFFFFFX','XbXbXbXbXbXbXX',
+        'XFFFFFFFFFFFFX','XFFFFFFFFFFFFX','XFFFFFFFFFFFFX','XFFFFFEFFFFFFX','XXXXXXXXXXXXXX'],
+    npcs: [{ x: 9, y: 5, d: 'l', n: 'vecina' }, { x: 3, y: 4, d: 'd', n: 'nene' }],
+    pistaZona: ['quintaruta', 'Uno del hogar hablaba de\nuna quinta en la ruta.'],
+    amb: 'Camas de caño, lavandina\ny sopa en ollas grandes.'
+  },
+  videoclub: {
+    interior: 1,
+    t: ['XXXXXXXXXXXXXX','XyyyyXXyyyyXXX','XFFFFFFFFFFFFX','XFFFFFFFFFFFFX',
+        'XyyyyXXyyyyXXX','XFFFFFFFFFFFFX','XMMMFFFFFFFFFX','XFFFFFEFFFFFFX','XXXXXXXXXXXXXX'],
+    npcs: [{ x: 2, y: 5, d: 'd', n: 'video' }],
+    amb: 'El unico local con luz\nen toda la cuadra.'
+  },
+  quinta: {
+    t: ['hhhhhhhhhhhhhhhhhh','hhhhhhhhhhhhhhhhhh','hhYhhhhhhhhhhhhYhh','hhhhhhhhhhhhhhhhhh',
+        'hhhhuuuuuuuuuhhhhh','hhhhuuuuuuuuuhhhhh','hhhhuuuuuuuuuhhhhh','hhhhhhhhhhhhhhhhhh',
+        'hhhh##########hhhh','hhhh#WW#DD#WW#hhhh','hhhh##########hhhh','hhhhhhhhhhhhhhhhhh',
+        'hhhhhhhhhhhhhhhhhh','iiiiiiiiiiiiiiiiii'],
+    obj: [{ x: 8, y: 5, txt: 'La pileta vacia, llena\nde hojas de dieciseis años.' }],
+    final: { x: 9, y: 8 },
+    amb: 'El mismo lugar. Nada mas\nque sin nadie.'
+  }
+};
+/* ---- src2/50_mundo.js ---- */
+// ============================================================
+//  MUNDO: caminar, hablar, el aguante
+// ============================================================
+let modo = 'titulo';
+let dlg = null;
+let fade = { v: 0, dir: 0, cb: null };
+
+// ---- cuadro de texto ----
+function armarPaginas(l) {
+  const p = [];
+  for (const x of [].concat(l)) {
+    const w = wrapText(x, 142);
+    for (let i = 0; i < w.length; i += 2) p.push(w.slice(i, i + 2));
+  }
+  return p;
+}
+function decir(l, cb) { dlg = { pgs: armarPaginas(l), p: 0, ch: 0, cb: cb || null, op: null, sel: 0, t: 0 }; modo = 'dialogo'; }
+function preguntar(l, ops, cb) { dlg = { pgs: armarPaginas(l), p: 0, ch: 0, op: ops, sel: 0, fin: cb, t: 0 }; modo = 'dialogo'; }
+function updDlg() {
+  const d = dlg, pg = d.pgs[d.p] || [''];
+  const total = pg.join('\n').length;
+  if (d.ch < total) {
+    d.ch += 2;
+    if (d.ch % 6 < 2) Audio2.sfx('bip');
+    if (KP.a || KP.b) d.ch = total;
+    return;
+  }
+  d.t++;
+  if (d.op && d.p >= d.pgs.length - 1) {
+    if (KP.up) { d.sel = (d.sel + d.op.length - 1) % d.op.length; Audio2.sfx('bip'); }
+    if (KP.dn) { d.sel = (d.sel + 1) % d.op.length; Audio2.sfx('bip'); }
+    if (KP.a) { Audio2.sfx('sel'); const f = d.fin, s = d.sel; dlg = null; modo = 'mundo'; f && f(s); }
+    return;
+  }
+  if (KP.a || KP.b) {
+    Audio2.sfx('sel');
+    if (d.p < d.pgs.length - 1) { d.p++; d.ch = 0; }
+    else { const c = d.cb; dlg = null; modo = 'mundo'; c && c(); }
+  }
+}
+function dibujarDlg() {
+  const d = dlg;
+  panel(0, 96, 160, 48);
+  const pg = d.pgs[d.p] || ['']; let n = d.ch;
+  for (let i = 0; i < pg.length; i++) {
+    const l = pg[i];
+    drawText(ctx, l.slice(0, Math.max(0, Math.min(l.length, n))), 8, 104 + i * 11, COL.texto);
+    n -= l.length + 1;
+  }
+  const total = pg.join('\n').length;
+  if (d.ch >= total) {
+    if (d.op && d.p >= d.pgs.length - 1) {
+      let w = 40;
+      for (const o of d.op) w = Math.max(w, textWidth(o) + 22);
+      const x = 160 - w - 6, y = 96 - 8 - d.op.length * 12;
+      panel(x, y, w, d.op.length * 12 + 8);
+      for (let i = 0; i < d.op.length; i++) drawText(ctx, d.op[i], x + 14, y + 5 + i * 12, COL.texto);
+      drawText(ctx, '>', x + 5, y + 5 + d.sel * 12, COL.acento);
+    } else if ((d.t >> 3) & 1) {
+      rect(150, 136, 4, 2, COL.acento); rect(151, 138, 2, 1, COL.acento);
+    }
+  }
+}
+
+// ---- personaje ----
+const P = { x: 5, y: 6, dir: 'd', mov: 0, off: 0, dx: 0, dy: 0, anim: 0 };
+let cam = { x: 0, y: 0 };
+const DIRV = { u: [0, -1], d: [0, 1], l: [-1, 0], r: [1, 0] };
+function mapaAct() { return MAPAS[G.zona]; }
+function tileEn(m, x, y) {
+  if (y < 0 || y >= m.t.length || x < 0 || x >= m.t[0].length) return null;
+  return m.t[y][x];
+}
+function npcEn(m, x, y) { return (m.npcs || []).find(n => n.x === x && n.y === y && !npcOculto(n)); }
+function npcOculto(n) {
+  if (n.duelo === 'juan' && G.pistas.juan) return 0;
+  if (n.n === 'hermana' && G.cap > 2 && G.flags.dni) return 0;
+  return 0;
+}
+function pasable(m, x, y) {
+  const t = tileEn(m, x, y);
+  if (t === null || SOLID.includes(t)) return false;
+  return !npcEn(m, x, y);
+}
+function camaraSeguir() {
+  const m = mapaAct(), mw = m.t[0].length * TILE, mh = m.t.length * TILE;
+  const px = P.x * TILE + P.dx * P.off, py = P.y * TILE + P.dy * P.off;
+  cam.x = mw <= W ? (mw - W) / 2 : clamp(px + 8 - W / 2, 0, mw - W);
+  cam.y = mh <= H ? (mh - H) / 2 : clamp(py + 8 - H / 2, 0, mh - H);
+}
+function entrarZona(z, x, y, dir) {
+  G.zona = z; P.x = x === undefined ? 5 : x; P.y = y === undefined ? 5 : y;
+  P.dir = dir || 'd'; P.mov = 0; P.off = 0; P.dx = 0; P.dy = 0;
+  camaraSeguir();
+  const m = MAPAS[z];
+  if (m.pistaZona && pista(m.pistaZona[0], m.pistaZona[1])) { }
+  cartel = 100; cartelTxt = (ZONAS[z] ? ZONAS[z].n : (z === 'casa' ? 'Tu departamento' : ''));
+}
+function fundir(cb) { fade.dir = 1; fade.cb = cb; }
+
+// ---- el aguante ----
+function aguante() {
+  const desde = G.min - (G.ultimaRaya || MIN_INICIO);
+  return clamp(1 - desde / 150, 0, 1);
+}
+function tomarRaya() {
+  if (G.stack <= 0) return false;
+  G.stack--; G.usos++; G.ultimaRaya = G.min; gastarMin(5);
+  return true;
+}
+
+// ---- interaccion ----
+function hablar() {
+  const m = mapaAct(), v = DIRV[P.dir];
+  const tx = P.x + v[0], ty = P.y + v[1];
+  const n = npcEn(m, tx, ty) || ((tileEn(m, tx, ty) === 'M') ? npcEn(m, tx + v[0], ty + v[1]) : null);
+  if (n) {
+    n.d = { u: 'd', d: 'u', l: 'r', r: 'l' }[P.dir];
+    if (n.duelo && !G.flags['d_' + n.duelo]) { empezarDuelo(n.duelo); return; }
+    gastarMin(5);
+    const d = NPCS[n.n] && NPCS[n.n].dial();
+    if (d) decir(d);
+    return;
+  }
+  // lugares especiales
+  if (m.cava && m.cava.x === tx && m.cava.y === ty) return cavar();
+  if (m.archivo && m.archivo.x === tx && m.archivo.y === ty) return archivo();
+  if (m.final && m.final.x === tx && m.final.y === ty) return escenaFinal();
+  const pu = (m.puertas || []).find(p => p.x === tx && p.y === ty);
+  if (pu) { Audio2.sfx('sel'); fundir(() => entrarZona(pu.a, pu.ax, pu.ay, 'd')); return; }
+  const o = (m.obj || []).find(o => o.x === tx && o.y === ty);
+  if (o) { decir(o.txt); return; }
+  const t = tileEn(m, tx, ty);
+  if (t === 'z' || t === '~') decir('El agua ni se mueve.\nNo devuelve nada.');
+  else if (t === 'J') decir('Juncos hasta la cintura.\nHay cosas tiradas.');
+  else if (t === 'c') decir('Una carpa. Adentro hay\nalguien durmiendo.');
+  else if (t === 'C') decir('Un contenedor. Huele a\nlo de siempre.');
+  else if (t === 'Z') decir('El reflector prendido.\nNadie lo apaga.');
+  else if (t === 'u') decir('La pileta vacia.\nHojas de dieciseis años.');
+  else if (t === 'b') decir('Una cama. Da ganas.');
+  else if (t === 'y') decir('Cientos de cajas negras\nordenadas por letra.');
+}
+
+function cavar() {
+  if (!tenes('plano')) { decir('Hay basura por todos lados.\nNo se por donde empezar.'); return; }
+  if (G.flags.cavo) { decir('Ya revisaste aca.'); return; }
+  G.flags.cavo = 1; gastarMin(15); dar('envoltorio');
+  pista('envoltorio', 'Los envoltorios tirados\nestan envueltos como los\nde ella.');
+  aprender('amague');
+  decir(['Segun el plano de Musa,\naca.',
+    '...',
+    'Bolsas, fierros, una\nsilla sin patas.',
+    'Y esto.',
+    '*Un envoltorio vacio*',
+    'Lo miras y lo das vuelta.',
+    'La cinta, el nudo, la\nmarca del fibron.',
+    'Lo viste cien veces\narriba de una mesa.',
+    'Esto lo envolvio ella.']);
+}
+function archivo() {
+  if (G.flags.legajo) { decir('El expediente ya lo\ntenes vos.'); return; }
+  G.flags.legajo = 1; gastarMin(10); dar('legajo');
+  pista('legajo', 'El expediente confirma:\nla camioneta del Tortuga\nfue robada de verdad.');
+  decir(['El archivo. Letra T.',
+    '...',
+    'Aca esta. La denuncia\noriginal.',
+    'Sello de la comisaria,\nfecha, todo en orden.',
+    'La camioneta se la\nrobaron de verdad.',
+    'Y vos firmaste catorce\nrechazos.',
+    '*Te llevaste el legajo*']);
+}
+
+// ---- update / draw ----
+function updMundo() {
+  const m = mapaAct();
+  if (P.mov) {
+    P.off += 2; P.anim++;
+    if (P.off >= TILE) {
+      P.x += P.dx; P.y += P.dy; P.off = 0; P.mov = 0; P.dx = 0; P.dy = 0;
+      const pu = (m.puertas || []).find(p => p.x === P.x && p.y === P.y);
+      if (pu) { Audio2.sfx('sel'); fundir(() => entrarZona(pu.a, pu.ax, pu.ay, 'd')); }
+    }
+    return;
+  }
+  if (KP.st) { abrirLibreta(); return; }
+  if (KP.b) { abrirMapa(); return; }
+  if (KP.a) { hablar(); return; }
+  let d = null;
+  if (K.up) d = 'u'; else if (K.dn) d = 'd'; else if (K.lf) d = 'l'; else if (K.rt) d = 'r';
+  if (!d) { P.anim = 0; return; }
+  P.dir = d;
+  const v = DIRV[d];
+  if (pasable(m, P.x + v[0], P.y + v[1])) { P.mov = 1; P.dx = v[0]; P.dy = v[1]; P.off = 0; }
+  else P.anim++;
+}
+
+let cartel = 0, cartelTxt = '';
+function dibujarMundo() {
+  const m = mapaAct();
+  rect(0, 0, W, H, PAL['0']);
+  const t0x = Math.floor(cam.x / TILE), t0y = Math.floor(cam.y / TILE);
+  for (let y = t0y; y <= t0y + 10; y++) for (let x = t0x; x <= t0x + 11; x++) {
+    const t = tileEn(m, x, y);
+    if (t === null || !TILES[t]) continue;
+    blit(TILES[t], x * TILE - cam.x, y * TILE - cam.y);
+  }
+  for (const n of (m.npcs || [])) {
+    if (npcOculto(n)) continue;
+    const s = spriteDe(n.n === 'apagado' ? 'apagado' : (LOOKS[n.n] ? n.n : (NPCS[n.n] ? NPCS[n.n].look : 'pibe')));
+    const px = n.x * TILE - cam.x, py = n.y * TILE - cam.y;
+    if (px < -16 || px > W || py < -16 || py > H) continue;
+    if (n.d === 'l') blitFlip(s.s[0], px, py);
+    else if (n.d === 'r') blit(s.s[0], px, py);
+    else if (n.d === 'u') blit(s.u[0], px, py);
+    else blit(s.d[0], px, py);
+  }
+  const s = spriteDe('yo');
+  const fr = P.mov ? ((P.anim >> 3) & 1) : 0;
+  const px = P.x * TILE + P.dx * P.off - cam.x, py = P.y * TILE + P.dy * P.off - cam.y;
+  if (P.dir === 'l') blitFlip(s.s[fr], px, py);
+  else if (P.dir === 'r') blit(s.s[fr], px, py);
+  else if (P.dir === 'u') blit(s.u[fr], px, py);
+  else blit(s.d[fr], px, py);
+  if (G.cap > 0) barraSuperior();
+  if (cartel > 0) {
+    cartel--;
+    const w = textWidth(cartelTxt) + 14;
+    panel(4, 14, w, 18); drawText(ctx, cartelTxt, 11, 19, COL.texto);
+  }
+}
+
+// reloj y guita siempre a la vista
+function barraSuperior() {
+  rect(0, 0, W, 11, PAL['0']);
+  rect(0, 10, W, 1, PAL['2']);
+  drawText(ctx, relojTexto(G.min), 3, 2, COL.acento);
+  const f = 'FALTA ' + faltaTexto();
+  drawText(ctx, f, 62, 2, G.min > MIN_FINAL - 90 ? PAL['g'] : COL.tenue);
+  const a = aguante();
+  rect(139, 3, 18, 5, PAL['2']);
+  rect(139, 3, Math.round(18 * a), 5, a > 0.5 ? PAL['b'] : a > 0.25 ? PAL['i'] : PAL['g']);
+}
+/* ---- src2/55_mapa.js ---- */
+// ============================================================
+//  EL MAPA DEL PARTIDO Y EL FORD FOX
+// ============================================================
+const MX = (v) => 6 + v * 1.27, MY = (v) => 14 + v * 1.27;
+let MP = null;
+let VIAJE = null;
+
+function zonasDisponibles() {
+  return ORDEN_ZONAS.filter(z => {
+    if (z === 'quinta') return !!G.flags.quinta;
+    if (G.cap <= 2) return z === 'nunez' || z === 'fiambreria';
+    return true;
+  });
+}
+function abrirMapa() {
+  const disp = zonasDisponibles();
+  MP = { sel: Math.max(0, disp.indexOf(zonaActual())), disp, t: 0 };
+  modo = 'mapa'; Audio2.sfx('sel');
+}
+function updMapa() {
+  MP.t++;
+  const d = MP.disp;
+  if (KP.b || KP.st) { modo = 'mundo'; Audio2.sfx('sel'); return; }
+  let dx = 0, dy = 0;
+  if (KP.lf) dx = -1; if (KP.rt) dx = 1; if (KP.up) dy = -1; if (KP.dn) dy = 1;
+  if (dx || dy) {
+    const cur = ZONAS[d[MP.sel]];
+    let mejor = -1, mejorV = 1e9;
+    for (let i = 0; i < d.length; i++) {
+      if (i === MP.sel) continue;
+      const z = ZONAS[d[i]], vx = z.mx - cur.mx, vy = z.my - cur.my;
+      const proy = vx * dx + vy * dy;
+      if (proy <= 0) continue;
+      const perp = Math.abs(vx * dy - vy * dx);
+      const v = Math.hypot(vx, vy) + perp * 2;
+      if (v < mejorV) { mejorV = v; mejor = i; }
+    }
+    if (mejor >= 0) { MP.sel = mejor; Audio2.sfx('bip'); }
+  }
+  if (KP.a) {
+    const destino = d[MP.sel];
+    const origen = zonaActual();
+    if (destino === origen) { modo = 'mundo'; Audio2.sfx('sel'); return; }
+    const min = minutosViaje(origen, destino);
+    Audio2.sfx('motor');
+    VIAJE = { a: origen, b: destino, t: 0, dur: 46, min };
+    modo = 'viaje';
+  }
+}
+function dibujarMapaPartido() {
+  rect(0, 0, W, H, PAL['0']);
+  // el rio de la plata
+  rect(0, 11, W, MY(4) - 11, PAL['c']);
+  for (let i = 0; i < 30; i++) {
+    const x = (i * 41 + ((MP ? MP.t : 0) >> 3)) % 176 - 8;
+    rect(x, 14 + (i % 3) * 4, 6, 1, PAL['d']);
+  }
+  // el Riachuelo bajando por el oeste
+  for (let y = 0; y < 60; y++) {
+    const x = MX(9 - Math.sin(y / 14) * 4);
+    rect(x, MY(2) + y, 3, 1, PAL['c']);
+  }
+  // las localidades
+  LOCALIDADES.forEach((L, i) => {
+    const x = MX(L.x), y = MY(L.y), w = L.w * 1.27, h = L.h * 1.27;
+    rect(x, y, w, h, i % 2 ? PAL['2'] : PAL['r']);
+    rect(x, y, w, 1, PAL['3']); rect(x, y + h - 1, w, 1, PAL['3']);
+    rect(x, y, 1, h, PAL['3']); rect(x + w - 1, y, 1, h, PAL['3']);
+  });
+  // avenidas: Mitre, Belgrano, la autopista
+  linea(MX(16), MY(24), MX(94), MY(60), PAL['h']);
+  linea(MX(20), MY(24), MX(96), MY(56), PAL['d']);
+  linea(MX(10), MY(6), MX(92), MY(64), PAL['f']);
+  linea(MX(14), MY(44), MX(96), MY(44), PAL['4']);
+  // los lugares
+  const d = MP ? MP.disp : zonasDisponibles();
+  for (const k of d) {
+    const z = ZONAS[k];
+    rect(MX(z.mx) - 5, MY(z.my) - 5, 10, 10, PAL['0']);
+    blit(ART.iconos[z.ic] || ART.iconos.casa, MX(z.mx) - 4, MY(z.my) - 4);
+  }
+  // donde estas
+  const aqui = ZONAS[zonaActual()];
+  if (aqui && ((MP ? MP.t : 0) >> 3) & 1) {
+    rect(MX(aqui.mx) - 6, MY(aqui.my) - 6, 12, 1, PAL['b']);
+    rect(MX(aqui.mx) - 6, MY(aqui.my) + 5, 12, 1, PAL['b']);
+  }
+  if (!MP) return;
+  // el cursor
+  const z = ZONAS[d[MP.sel]];
+  if ((MP.t >> 2) & 1) {
+    const x = MX(z.mx) - 7, y = MY(z.my) - 7;
+    rect(x, y, 4, 1, COL.acento); rect(x, y, 1, 4, COL.acento);
+    rect(x + 10, y, 4, 1, COL.acento); rect(x + 13, y, 1, 4, COL.acento);
+    rect(x, y + 13, 4, 1, COL.acento); rect(x, y + 10, 1, 4, COL.acento);
+    rect(x + 10, y + 13, 4, 1, COL.acento); rect(x + 13, y + 10, 1, 4, COL.acento);
+  }
+  // ficha del destino
+  panel(0, 108, 160, 36);
+  const origen = zonaActual();
+  drawText(ctx, z.n.slice(0, 26), 6, 112, COL.texto);
+  drawText(ctx, z.loc, 6, 123, COL.tenue);
+  if (d[MP.sel] === origen) drawText(ctx, 'ESTAS ACA', 6, 133, COL.acento);
+  else {
+    drawText(ctx, minutosViaje(origen, d[MP.sel]) + ' min', 6, 133, COL.acento);
+    if (z.banda) drawText(ctx, z.banda, 62, 133, PAL['g']);
+  }
+  rect(0, 0, W, 11, PAL['0']); rect(0, 10, W, 1, PAL['2']);
+  drawText(ctx, relojTexto(G.min), 3, 2, COL.acento);
+  drawText(ctx, 'FALTA ' + faltaTexto(), 62, 2, COL.tenue);
+}
+function linea(x0, y0, x1, y1, col) {
+  const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) | 0;
+  for (let i = 0; i <= n; i++) rect(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n, 1, 1, col);
+}
+
+// ---- el viaje ----
+function updViaje() {
+  VIAJE.t++;
+  if (VIAJE.t === 1) Audio2.play('auto');
+  if (VIAJE.t >= VIAJE.dur) {
+    gastarMin(VIAJE.min);
+    const dest = VIAJE.b; VIAJE = null; MP = null;
+    Audio2.play('noche');
+    fundir(() => {
+      entrarZona(dest, entradaDe(dest).x, entradaDe(dest).y, 'd');
+      if (G.min >= MIN_FINAL) return amanecerSinLlegar();
+      const m = MAPAS[dest];
+      if (m.amb) decir(m.amb);
+    });
+    modo = 'mundo';
+  }
+}
+function entradaDe(z) {
+  const m = MAPAS[z];
+  for (let y = m.t.length - 1; y >= 0; y--)
+    for (let x = 0; x < m.t[0].length; x++)
+      if (!SOLID.includes(m.t[y][x]) && !(m.puertas || []).some(p => p.x === x && p.y === y)) return { x, y };
+  return { x: 1, y: 1 };
+}
+function dibujarViaje() {
+  dibujarMapaPartido();
+  const a = ZONAS[VIAJE.a], b = ZONAS[VIAJE.b], k = VIAJE.t / VIAJE.dur;
+  const x = MX(a.mx + (b.mx - a.mx) * k), y = MY(a.my + (b.my - a.my) * k);
+  linea(MX(a.mx), MY(a.my), x, y, COL.acento);
+  const izq = b.mx < a.mx;
+  if (izq) blitFlip(ART.fox, x - 8, y - 5); else blit(ART.fox, x - 8, y - 5);
+  panel(0, 108, 160, 36);
+  drawText(ctx, 'Yendo a ' + ZONAS[VIAJE.b].n.slice(0, 16), 6, 114, COL.texto);
+  drawText(ctx, '- ' + VIAJE.min + ' min', 6, 128, PAL['g']);
+}
+/* ---- src2/60_duelo.js ---- */
+// ============================================================
+//  DUELOS DE BERRETINES
+// ============================================================
+let D = null;
+function empezarDuelo(id) {
+  const d = DUELOS[id];
+  D = { id, d, ronda: 0, moral: d.rondas.length, paciencia: aguante() < 0.35 ? 2 : 3, sel: 0, t: 0, fase: 'intro', msg: '', ch: 0, cola: [] };
+  modo = 'duelo'; Audio2.play('duelo');
+  D.cola = d.pre.slice();
+  siguienteMsg();
+}
+function siguienteMsg() {
+  if (D.cola.length) { D.msg = D.cola.shift(); D.ch = 0; D.fase = 'msg'; return true; }
+  return false;
+}
+function opcionesDeRonda() {
+  const r = D.d.rondas[D.ronda];
+  let ops = r.o.map((o, i) => ({ o, i }));
+  // los que piden un berretin que no aprendiste no se te ocurren
+  ops = ops.map(x => x.o.req && !G.berretines.includes(x.o.req) ? { o: { t: '(no se te ocurre nada)', mudo: 1 }, i: x.i } : x);
+  return ops;
+}
+function updDuelo() {
+  D.t++;
+  if (D.fase === 'msg') {
+    if (D.ch < D.msg.length) { D.ch += 2; if (KP.a || KP.b) D.ch = D.msg.length; return; }
+    if (KP.a || KP.b) {
+      Audio2.sfx('sel');
+      if (!siguienteMsg()) {
+        if (D.fin) return terminarDuelo();
+        D.fase = 'elegir'; D.sel = 0; D.ops = opcionesDeRonda();
+      }
+    }
+    return;
+  }
+  if (D.fase === 'elegir') {
+    const n = D.ops.length;
+    if (KP.up) { D.sel = (D.sel + n - 1) % n; Audio2.sfx('bip'); }
+    if (KP.dn) { D.sel = (D.sel + 1) % n; Audio2.sfx('bip'); }
+    if (KP.a) {
+      const el = D.ops[D.sel];
+      Audio2.sfx('sel');
+      if (el.o.mudo) { D.cola = ['(Te quedas sin decir\nnada. Se rie.)']; D.paciencia--; }
+      else if (el.o.ok) {
+        D.moral--; Audio2.sfx('golpe');
+        D.cola = ['VOS: ' + el.o.t, '(Le pego.)'];
+      } else {
+        D.paciencia--; Audio2.sfx('mal');
+        D.cola = ['VOS: ' + el.o.t, '(No le hizo nada.)'];
+      }
+      D.ronda++;
+      if (D.moral <= 0 || D.paciencia <= 0 || D.ronda >= D.d.rondas.length) {
+        D.gano = D.moral <= 0 || (D.paciencia > 0 && D.ronda >= D.d.rondas.length && D.moral <= 1);
+        D.cola = D.cola.concat(D.gano ? D.d.gana : D.d.pierde);
+        D.fin = 1;
+      } else {
+        D.cola.push(D.d.rondas[D.ronda].i);
+      }
+      siguienteMsg();
+    }
+  }
+}
+function terminarDuelo() {
+  const id = D.id, gano = D.gano, min = D.d.min;
+  D = null; modo = 'mundo'; Audio2.play('noche');
+  gastarMin(min);
+  if (id === 'fredy') { G.flags.ganoFredy = gano; return desenlace(); }
+  if (!gano) { decir(['(Te fuiste con la cola\nentre las patas.)', '(Podes volver a intentar.)']); return; }
+  G.flags['d_' + id] = 1;
+  if (id === 'tortuga') {
+    pista('tortuga', 'El Tortuga no la tiene.\nLa camioneta se la robaron\nde verdad.');
+    G.banda.Independiente = 1; G.ayudados++;
+    aprender('vuelto');
+  }
+  if (id === 'juan') {
+    pista('juan', 'Juan le dio a Fredy un\nDNI viejo. Lo tenia de\ntu cumpleaños de 2010.');
+    aprender('careta');
+  }
+  if (id === 'santelmo') { G.banda['San Telmo'] = 1; aprender('gil'); }
+  if (id === 'capital') { G.banda['Boca y River'] = 1; aprender('chamuyo'); }
+  decir(['(Ganaste el cruce.)']);
+}
+function dibujarDuelo() {
+  rect(0, 0, W, H, PAL['0']);
+  rect(0, 30, W, 66, PAL['1']);
+  rect(0, 29, W, 1, PAL['2']);
+  rect(0, 88, W, 8, PAL['r']);
+  const mio = spriteDe('yo'), suyo = spriteDe(D.d.look);
+  blit(suyo.s[0], 108, 50, 2.4);
+  blitFlip(mio.s[0], 14, 50, 2.4);
+  // paciencia y moral
+  panel(2, 1, 74, 26);
+  drawText(ctx, 'VOS', 7, 5, COL.texto);
+  for (let i = 0; i < 3; i++) rect(36 + i * 9, 6, 7, 6, i < D.paciencia ? PAL['b'] : PAL['2']);
+  const a = aguante();
+  drawText(ctx, a < 0.35 ? 'FUNDIDO' : 'AGUANTE', 7, 16, a < 0.35 ? PAL['g'] : COL.tenue);
+  rect(56, 17, 16, 5, PAL['2']);
+  rect(56, 17, Math.round(16 * a), 5, a > 0.5 ? PAL['b'] : a > 0.25 ? PAL['i'] : PAL['g']);
+  panel(84, 1, 74, 26);
+  drawText(ctx, D.d.nom.slice(0, 13), 89, 5, COL.texto);
+  drawText(ctx, 'MORAL', 89, 16, COL.tenue);
+  for (let i = 0; i < D.d.rondas.length; i++)
+    rect(122 + i * 7, 17, 5, 5, i < D.moral ? PAL['g'] : PAL['2']);
+  // texto
+  panel(0, 96, 160, 48);
+  if (D.fase === 'msg') {
+    const ls = D.msg.split('\n'); let n = D.ch;
+    for (let i = 0; i < ls.length; i++) {
+      drawText(ctx, ls[i].slice(0, Math.max(0, Math.min(ls[i].length, n))), 8, 104 + i * 11, COL.texto);
+      n -= ls[i].length + 1;
+    }
+    if (D.ch >= D.msg.length && ((D.t >> 3) & 1)) { rect(150, 136, 4, 2, COL.acento); rect(151, 138, 2, 1, COL.acento); }
+  } else {
+    let y = 100;
+    for (let i = 0; i < D.ops.length; i++) {
+      const ls = D.ops[i].o.t.split('\n');
+      const col = D.ops[i].o.mudo ? COL.tenue : COL.texto;
+      for (let j = 0; j < ls.length; j++) drawText(ctx, ls[j], 12, y + j * 9, col);
+      if (D.sel === i) drawText(ctx, '>', 3, y, COL.acento);
+      y += ls.length * 9 + 2;
+    }
+  }
+}
+/* ---- src2/70_libreta.js ---- */
+// ============================================================
+//  LA LIBRETA
+// ============================================================
+let LB = null;
+const LB_OP = ['PISTAS', 'BERRETINES', 'BOLSILLOS', 'AGUANTAR', 'ATAR CABOS', 'GUARDAR', 'CERRAR'];
+function abrirLibreta() { LB = { p: 'menu', sel: 0, sel2: 0 }; modo = 'libreta'; Audio2.sfx('sel'); }
+function cerrarLibreta() { LB = null; modo = 'mundo'; }
+function puedeAtar() { return G.pistas.juan && tenes('dni') && !G.flags.quinta; }
+
+function updLibreta() {
+  const p = LB.p;
+  if (p === 'menu') {
+    if (KP.up) { LB.sel = (LB.sel + LB_OP.length - 1) % LB_OP.length; Audio2.sfx('bip'); }
+    if (KP.dn) { LB.sel = (LB.sel + 1) % LB_OP.length; Audio2.sfx('bip'); }
+    if (KP.b || KP.st) { cerrarLibreta(); return; }
+    if (KP.a) {
+      Audio2.sfx('sel');
+      const o = LB_OP[LB.sel];
+      if (o === 'CERRAR') return cerrarLibreta();
+      if (o === 'AGUANTAR') {
+        if (G.stack <= 0) { LB.p = 'aviso'; LB.txt = 'No te queda nada.\nY todavia falta.'; return; }
+        tomarRaya();
+        LB.p = 'aviso'; LB.txt = 'Listo. Otra vez entero.\nTe quedan ' + G.stack + '.';
+        return;
+      }
+      if (o === 'ATAR CABOS') {
+        if (!puedeAtar()) { LB.p = 'aviso'; LB.txt = G.flags.quinta ? 'Ya sabes donde es.' : 'Todavia no te cierra\nnada.'; return; }
+        cerrarLibreta(); return atarCabos();
+      }
+      if (o === 'GUARDAR') {
+        const ok = saveGame({ G, P: { x: P.x, y: P.y, dir: P.dir } });
+        LB.p = 'aviso'; LB.txt = ok ? 'Guardado en el telefono.' : 'No se pudo guardar.';
+        return;
+      }
+      LB.p = o.toLowerCase(); LB.sel2 = 0;
+    }
+    return;
+  }
+  if (p === 'aviso') { if (KP.a || KP.b) { Audio2.sfx('sel'); LB.p = 'menu'; } return; }
+  if (KP.b || KP.a) { Audio2.sfx('sel'); LB.p = 'menu'; return; }
+  const n = p === 'pistas' ? Object.keys(G.pistas).length : p === 'berretines' ? G.berretines.length : Object.keys(G.obj).length;
+  if (KP.up && n) LB.sel2 = (LB.sel2 + n - 1) % n;
+  if (KP.dn && n) LB.sel2 = (LB.sel2 + 1) % n;
+}
+function dibujarLibreta() {
+  const p = LB.p;
+  rect(0, 0, W, H, PAL['1']);
+  panel(0, 0, W, H);
+  if (p === 'menu' || p === 'aviso') {
+    drawText(ctx, 'LIBRETA', 8, 6, COL.acento);
+    drawText(ctx, relojTexto(G.min), 112, 6, COL.texto);
+    for (let i = 0; i < LB_OP.length; i++) {
+      let t = LB_OP[i], col = COL.texto;
+      if (t === 'ATAR CABOS' && !puedeAtar()) col = COL.tenue;
+      if (t === 'AGUANTAR') t += '  (' + G.stack + ')';
+      drawText(ctx, t, 20, 22 + i * 12, col);
+      if (LB.sel === i) drawText(ctx, '>', 10, 22 + i * 12, COL.acento);
+    }
+    drawText(ctx, 'Pistas: ' + Object.keys(G.pistas).length, 8, 112, COL.tenue);
+    drawText(ctx, '$' + (G.guita / 1000).toFixed(0) + 'k', 8, 124, COL.tenue);
+    drawText(ctx, 'Berretines: ' + G.berretines.length, 76, 112, COL.tenue);
+    drawText(ctx, 'Falta ' + faltaTexto(), 76, 124, COL.tenue);
+    if (p === 'aviso') { panel(0, 96, 160, 48); const ls = LB.txt.split('\n'); for (let i = 0; i < ls.length; i++) drawText(ctx, ls[i], 8, 106 + i * 11, COL.texto); }
+    return;
+  }
+  if (p === 'pistas') {
+    drawText(ctx, 'PISTAS', 8, 6, COL.acento);
+    const ks = Object.keys(G.pistas);
+    if (!ks.length) drawText(ctx, 'Nada todavia.', 8, 24, COL.tenue);
+    let y = 20;
+    for (let i = 0; i < ks.length && y < 130; i++) {
+      const ls = G.pistas[ks[i]].split('\n');
+      for (let j = 0; j < ls.length; j++) drawText(ctx, ls[j], 12, y + j * 9, i === LB.sel2 ? COL.texto : COL.tenue);
+      if (i === LB.sel2) drawText(ctx, '>', 3, y, COL.acento);
+      y += ls.length * 9 + 3;
+    }
+    return;
+  }
+  if (p === 'berretines') {
+    drawText(ctx, 'BERRETINES', 8, 6, COL.acento);
+    if (!G.berretines.length) drawText(ctx, 'Todavia no te quemo\nnadie.', 8, 24, COL.tenue);
+    let y = 20;
+    for (const b of G.berretines) {
+      const ls = BERRETINES[b].split('\n');
+      for (let j = 0; j < ls.length; j++) drawText(ctx, ls[j], 10, y + j * 9, COL.texto);
+      y += ls.length * 9 + 4;
+    }
+    return;
+  }
+  if (p === 'bolsillos') {
+    drawText(ctx, 'BOLSILLOS', 8, 6, COL.acento);
+    const ks = Object.keys(G.obj);
+    for (let i = 0; i < ks.length; i++) {
+      drawText(ctx, OBJETOS[ks[i]].n, 12, 20 + i * 11, i === LB.sel2 ? COL.texto : COL.tenue);
+      if (i === LB.sel2) drawText(ctx, '>', 3, 20 + i * 11, COL.acento);
+    }
+    if (ks.length) {
+      panel(0, 100, 160, 44);
+      const ls = OBJETOS[ks[LB.sel2]].d.split('\n');
+      for (let j = 0; j < ls.length; j++) drawText(ctx, ls[j], 8, 108 + j * 11, COL.texto);
+    }
+  }
+}
+/* ---- src2/80_main.js ---- */
+// ============================================================
+//  ARRANQUE, CAPITULOS Y FINALES
+// ============================================================
+function drawTextBig(s, x, y, color, sc) {
+  const w = textWidth(s) + 2, tmp = document.createElement('canvas');
+  tmp.width = w; tmp.height = 9;
+  const c = tmp.getContext('2d'), a = glyphAtlas(color);
+  let cx = 0;
+  for (const ch of s) {
+    const g = GLYPHS[ch] || GLYPHS['?'];
+    const p = a.pos[ch] !== undefined ? a.pos[ch] : a.pos['?'];
+    c.drawImage(a.cv, p, 0, 8, 8, cx, 0, 8, 8); cx += g.w + 1;
+  }
+  blit(tmp, x, y, sc);
+}
+const centrar = (s, sc) => (W - textWidth(s) * (sc || 1)) / 2;
+
+// el 2010 tiene su propio mapa
+MAPAS.quinta2010 = {
+  t: MAPAS.quinta.t,
+  npcs: [{ x: 2, y: 9, d: 'd', n: 'juan2010' }, { x: 15, y: 11, d: 'l', n: 'chapa2010' }],
+  obj: [{ x: 8, y: 5, txt: 'La pileta. Alguien tiro\nuna reposera adentro.' }],
+  amb: ''
+};
+NPCS.juan2010 = { nom: 'Juan', look: 'juan', dial: () => {
+  G.flags.juan2010 = 1;
+  return ['¡Feliz cumple, boludo!',
+    'Dieciocho. Ya sos un\nviejo choto.',
+    'Uh, mira la hora.',
+    'Che... quedate a dormir.',
+    'Deja las cosas aca que\nmañana las buscas.'];
+}};
+NPCS.chapa2010 = { nom: 'El Gordo Chapa', look: 'chapa', dial: () => [
+  'Traje los parlantes.',
+  'Esta noche no se corta\nla musica ni a palos.'] };
+
+let TIT = { t: 0, sel: 0, hay: false };
+function updTitulo() {
+  TIT.t++;
+  if (KP.a || KP.st) {
+    Audio2.unlock(); Audio2.sfx('sel');
+    if (TIT.hay && TIT.sel === 0) {
+      const s = loadGame();
+      if (s && s.G) {
+        G = s.G; ponerLuz('noche'); modo = 'mundo'; Audio2.play('noche');
+        entrarZona(G.zona, s.P.x, s.P.y, s.P.dir); return;
+      }
+    }
+    return empezar2010();
+  }
+  if ((KP.up || KP.dn) && TIT.hay) { TIT.sel = 1 - TIT.sel; Audio2.sfx('bip'); }
+}
+function dibujarTitulo() {
+  rect(0, 0, W, H, PAL['0']);
+  for (let i = 0; i < 40; i++) {
+    const x = (i * 61) % 160, y = (i * 37) % 60;
+    rect(x, y, 1, 1, i % 3 ? PAL['2'] : PAL['3']);
+  }
+  // siluetas de torres
+  const sil = [[2, 74, 18, 70], [22, 62, 14, 82], [38, 84, 22, 60], [62, 70, 16, 74],
+  [80, 88, 26, 56], [108, 66, 18, 78], [128, 92, 30, 52]];
+  for (const s of sil) {
+    rect(s[0], s[1], s[2], s[3], PAL['1']);
+    for (let y = s[1] + 4; y < 144; y += 9)
+      for (let x = s[0] + 3; x < s[0] + s[2] - 2; x += 7)
+        if ((x * 7 + y * 5) % 6 < 2) rect(x, y, 2, 3, PAL['i']);
+  }
+  drawTextBig('NO SALE', centrar('NO SALE', 2), 16, PAL['s'], 2);
+  drawTextBig('EL SOL', centrar('EL SOL', 2), 34, PAL['s'], 2);
+  drawText(ctx, 'Avellaneda, 2026', centrar('Avellaneda, 2026'), 56, PAL['h']);
+  const ops = TIT.hay ? ['SEGUIR', 'DE CERO'] : ['ARRANCAR'];
+  panel(48, 100, 64, ops.length * 12 + 10);
+  for (let i = 0; i < ops.length; i++) {
+    drawText(ctx, ops[i], 64, 105 + i * 12, COL.texto);
+    if (TIT.sel === i) drawText(ctx, '>', 54, 105 + i * 12, COL.acento);
+  }
+  if ((TIT.t >> 4) & 1) drawText(ctx, 'A / START', centrar('A / START'), 132, PAL['4']);
+}
+
+// ---- capitulo 0: la quinta, 2010 ----
+function empezar2010() {
+  nuevaPartida();
+  G.zona = 'quinta2010'; G.cap = 0;
+  ponerLuz('dia'); Audio2.play('verano');
+  modo = 'mundo';
+  entrarZona('quinta2010', 2, 12, 'u');
+  cartel = 0;
+  decir(['VERANO DE 2010.',
+    'Tu quinta. Tu cumpleaños\nde dieciocho.',
+    'Vinieron veinte.',
+    'Es la ultima vez que van\na estar todos juntos,',
+    'pero eso todavia no lo\nsabe nadie.',
+    '(Hablá con Juan.)']);
+}
+function chequear2010() {
+  if (G.cap === 0 && G.flags.juan2010 && modo === 'mundo') {
+    G.cap = 1;
+    fundir(() => {
+      ponerLuz('noche'); Audio2.play('noche');
+      entrarZona('casa', 5, 6, 'd');
+      G.stack = 3; G.ultimaRaya = MIN_INICIO;
+      decir(['DIECISEIS AÑOS DESPUES.',
+        'Hace un mes que no sale\nel sol.',
+        'En la radio dijeron que\nen 24 horas arranca',
+        'el estado de sitio.',
+        'Antes de que cierren\ntodo tenes que comprar.',
+        'Medio kilo. Tenes la\nguita junta.',
+        'La Tia te paso un punto\nde encuentro:',
+        'la vieja fiambreria\ndonde laburabas.',
+        '(B = subir al Fox)\n(Enter = libreta)']);
+    });
+  }
+}
+
+// ---- capitulo 3: llamar a Fredy ----
+function chequearCapitulo() {
+  if (G.cap === 2 && modo === 'mundo' && !dlg && G.zona !== 'fiambreria') {
+    G.cap = 3;
+    decir(['No podes ir a la cana.\nTu documento estaba ahi.',
+      'Hay un solo tipo que se\nmueve de noche por aca.',
+      'El que te vendia antes.\nEl que dejaste sin avisar.',
+      '...',
+      'Lo llamas.',
+      'Atiende al segundo tono.'],
+      () => {
+        decir(NPCS.fredy.dial(), () => {
+          decir(['(Le dijiste que buscas a\nuna tia tuya.)',
+            '(Un familiar.)',
+            '(No es mentira del todo:\nasi le dice todo el mundo.)',
+            '(Ahora se abrio todo el\npartido en el mapa.)']);
+        });
+      });
+  }
+}
+
+// ---- atar cabos ----
+function atarCabos() {
+  G.flags.quinta = 1;
+  Audio2.sfx('pista');
+  decir(['Sacas el documento y lo\nmiras de nuevo.',
+    'Vencido. Foto tuya a los\ndieciocho.',
+    'Juan lo tenia guardado\nhace dieciseis años.',
+    '...',
+    'Pero Juan no lo saco de\nningun lado.',
+    'Se le quedo esa noche.',
+    'La noche de tu cumple.',
+    'En la quinta.',
+    '...',
+    'Fredy tiene el documento\ny tiene el dato del lugar.',
+    'Se los dio los dos el\nmismo pibe.',
+    'Pero nadie le dijo nunca\nque eran la misma cosa.',
+    '...',
+    'La prueba que dejo para\nhundirte',
+    'es la direccion donde la\ntiene.',
+    '*LA QUINTA se abrio en\nel mapa*']);
+}
+
+// ---- el final ----
+function escenaFinal() {
+  if (G.flags.finalVisto) return;
+  G.flags.finalVisto = 1; G.cap = 8;
+  decir(['La puerta esta abierta.',
+    '...',
+    'Adentro hay luz. Y olor\na comida.',
+    '...',
+    'Estan los dos.',
+    'Sentados en la cocina de\ntu casa de la infancia.',
+    'Hablando en un idioma que\nes el tuyo',
+    'pero de un lugar que no.',
+    'De gente que no conoces.\nDe cosas del 2009.',
+    '...',
+    'Ella te ve y no se\nsorprende.',
+    'Fredy tampoco.',
+    'No te estaban esperando.'],
+    () => empezarDuelo('fredy'));
+}
+
+function desenlace() {
+  const denunciable = 1;
+  preguntar(['Fredy pone el medio kilo\narriba de la mesa.',
+    '"Llevatelo y andate."',
+    '"Y esto no paso."',
+    '...',
+    'Ella no dice nada.',
+    'Se queda mirando el\nmantel.',
+    '¿Que hacés?'],
+    ['Agarrarlo', 'Dejarlo ahi'], (s) => {
+      G.flags.agarro = (s === 0);
+      fundir(() => { ponerLuz('dia'); Audio2.play('verano'); epilogo(); });
+    });
+}
+function amanecerSinLlegar() {
+  G.flags.tarde = 1;
+  fundir(() => { ponerLuz('dia'); Audio2.play('verano'); epilogo(); });
+}
+
+// ---- epilogo ----
+let EP = null;
+function epilogo() {
+  modo = 'epilogo';
+  EP = { y: 0, t: 0, lineas: armarEpilogo() };
+}
+function armarEpilogo() {
+  const L = [];
+  L.push('', '', '');
+  if (G.flags.tarde) {
+    L.push('Amanecio.', '', 'No llegaste.', '',
+      'A las seis en punto', 'entraron por el puente.', '');
+  } else {
+    L.push('Volviste por la autopista.', '',
+      'Avellaneda se fue por la', 'ventana de atras.', '');
+    L.push('Y en el camino,', 'sin que nadie lo anuncie,', 'empezo a aclarar.', '');
+  }
+  L.push('---', '');
+  if (G.usos === 0) {
+    L.push('EL SOL', '',
+      'No usaste nada en toda', 'la noche.', '',
+      'Podes mirarlo de frente.', '',
+      'Te dura tres segundos y', 'despues te arden los ojos.', '',
+      'Pero lo miraste.', '');
+  } else if (G.ayudados >= 3 && G.guita < 250000) {
+    L.push('EL QUE LLEGO SIN NADA', '',
+      'Gastaste la guita en', 'el camino.', '',
+      'En coimas, en remedios,', 'en gente.', '',
+      'No pudiste comprar nada.', '',
+      'Pero llegaste con ocho', 'personas atras.', '');
+  } else if (G.ayudados === 0) {
+    L.push('EL QUE FUE SOLO', '',
+      'No paraste a ayudar a', 'nadie.', '',
+      'Llegaste solo.', '',
+      'Y no hubo escena.', '');
+  } else if (G.pistas.laTia) {
+    L.push('EL QUE SE DIO CUENTA', '',
+      'Lo escuchaste decir', '"la Tia" a las tres de', 'la mañana.', '',
+      'Y desde ahi manejaste', 'sabiendo.', '',
+      'Eso no lo hizo mas facil.', '');
+  } else {
+    L.push('EL ARREGLO', '',
+      'Se quedaron juntos.', '',
+      'Quince años, otro pais,', 'gente en comun.', '',
+      'Vos eras el cliente.', '');
+  }
+  L.push('', '---', '');
+  if (G.flags.agarro) L.push('Te llevaste el medio kilo.', '', 'Nadie te va a preguntar', 'de donde salio.', '');
+  else if (G.flags.agarro === false) L.push('Lo dejaste arriba de la', 'mesa.', '', 'No sabes bien por que.', '');
+  L.push('', 'Nunca supiste como se', 'llamaba de verdad.', '');
+  L.push('', 'Pistas juntadas: ' + Object.keys(G.pistas).length,
+    'Berretines aprendidos: ' + G.berretines.length,
+    'Gente que ayudaste: ' + G.ayudados,
+    'Veces que aguantaste: ' + G.usos, '');
+  L.push('', '', 'NO SALE EL SOL', 'Avellaneda, 2026', '', '',
+    'Hecho en el conurbano.', '', '', 'A = volver al titulo', '');
+  return L;
+}
+function updEpilogo() {
+  EP.t++; EP.y += 0.32;
+  if (KP.a && EP.t > 90) { ponerLuz('noche'); modo = 'titulo'; TIT.hay = !!loadGame(); Audio2.play('noche'); }
+}
+function dibujarEpilogo() {
+  rect(0, 0, W, H, PAL['e']);
+  rect(0, 96, W, 48, PAL['b']);
+  rect(0, 92, W, 4, PAL['a']);
+  // el sol
+  ctx.fillStyle = PAL['i'];
+  ctx.beginPath(); ctx.arc(128, 26, 12, 0, 7); ctx.fill();
+  for (let i = 0; i < EP.lineas.length; i++) {
+    const y = 150 + i * 11 - EP.y;
+    if (y < -12 || y > 150) continue;
+    const t = EP.lineas[i];
+    drawText(ctx, t, centrar(t), y, t === t.toUpperCase() && t.length > 3 ? PAL['0'] : PAL['1']);
+  }
+}
+
+// ============================================================
+//  BUCLE
+// ============================================================
+let acumulado = 0, ultimo = 0;
+function paso(dibujar) {
+  if (dibujar === undefined) dibujar = true;
+  if (fade.dir === 1) {
+    fade.v += 0.08;
+    if (fade.v >= 1) { fade.v = 1; fade.dir = -1; const c = fade.cb; fade.cb = null; c && c(); }
+  } else if (fade.dir === -1) {
+    fade.v -= 0.08; if (fade.v <= 0) { fade.v = 0; fade.dir = 0; }
+  } else {
+    if (modo === 'titulo') updTitulo();
+    else if (modo === 'mundo') { updMundo(); chequear2010(); chequearCapitulo(); }
+    else if (modo === 'dialogo') updDlg();
+    else if (modo === 'mapa') updMapa();
+    else if (modo === 'viaje') updViaje();
+    else if (modo === 'duelo') updDuelo();
+    else if (modo === 'libreta') updLibreta();
+    else if (modo === 'epilogo') updEpilogo();
+  }
+  if (!dibujar) { clearPressed(); return; }
+
+  if (modo === 'titulo') dibujarTitulo();
+  else if (modo === 'mapa') dibujarMapaPartido();
+  else if (modo === 'viaje') dibujarViaje();
+  else if (modo === 'duelo') dibujarDuelo();
+  else if (modo === 'libreta') dibujarLibreta();
+  else if (modo === 'epilogo') dibujarEpilogo();
+  else { camaraSeguir(); dibujarMundo(); if (modo === 'dialogo' && dlg) dibujarDlg(); }
+  if (fade.v > 0) { ctx.fillStyle = 'rgba(3,3,8,' + fade.v + ')'; ctx.fillRect(0, 0, W, H); }
+  clearPressed();
+}
+function bucle(t) {
+  requestAnimationFrame(bucle);
+  if (!ultimo) ultimo = t;
+  let dt = t - ultimo; ultimo = t;
+  if (dt > 250) dt = 250;
+  acumulado += dt;
+  let n = 0;
+  while (acumulado >= 16.666 && n < 4) { acumulado -= 16.666; n++; paso(acumulado < 16.666 || n >= 4); }
+}
+reconstruirArte();
+TIT.hay = !!loadGame();
+resize();
+requestAnimationFrame(bucle);
+</script>
+</body>
+</html>
